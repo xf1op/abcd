@@ -66,7 +66,7 @@ for assetTypeName, propertyName in pairs({
 	FaceMakeup = "FaceMakeup",
 	LipMakeup = "LipMakeup",
 	EyeMakeup = "EyeMakeup",
-}) do
+	}) do
 	local probe = Instance.new("HumanoidDescription")
 	local propertyExists = pcall(function() local _ = probe[propertyName] end)
 	probe:Destroy()
@@ -217,7 +217,7 @@ for enumName, assetTypeName in pairs({
 	Front = "FrontAccessory",
 	Back = "BackAccessory",
 	Waist = "WaistAccessory",
-}) do
+	}) do
 	local ok, accessoryType = pcall(function() return Enum.AccessoryType[enumName] end)
 	if ok and accessoryType then ACCESSORY_TYPE_NAMES[accessoryType] = assetTypeName end
 end
@@ -827,12 +827,12 @@ local PUBLIC_INVENTORY_TYPE_IDS = {
 }
 local PUBLIC_LOOKUP_COOLDOWN = 2
 local publicInventoryLastRequest = {}
-local function getPublicInventory(userId)
+local function getPublicInventory(userId, onPage)
 	local results, seen = {}, {}
 	local partial = false
-	local maximumItems = 900
+	local maximumItems = 10000
 	local pageSize = 100
-	local maxPagesPerType = 4
+	local maxPagesPerType = 10000
 	local successfulTypes = 0
 	local firstBadRequest
 	local stopAll = false
@@ -903,6 +903,7 @@ local function getPublicInventory(userId)
 
 			successfulTypes += 1
 			local pageItems = payload.data or payload.Data or payload.items or payload.Items or {}
+			local pageResults = {}
 			if type(pageItems) == "table" then
 				for _, raw in ipairs(pageItems) do
 					local assetId
@@ -916,15 +917,28 @@ local function getPublicInventory(userId)
 						local rawName = type(raw) == "table" and (raw.assetName or raw.AssetName or raw.name or raw.Name) or nil
 						local name = tostring(rawName or ("Item " .. assetId))
 						local typeName = ASSET_TYPE_NAMES[assetTypeId] or "Item"
-						table.insert(results, { id = assetId, name = name, typeName = typeName })
+						local normalizedItem = {
+							id = assetId,
+							name = name,
+							typeName = typeName,
+						}
+
+						table.insert(results, normalizedItem)
+						table.insert(pageResults, normalizedItem)
 						if #results >= maximumItems then
 							partial = true
-						break
+							break
 						end
 					end
 				end
 			end
+			if #pageResults > 0 and type(onPage) == "function" then
+				local callbackOk, callbackError = pcall(onPage, pageResults)
 
+				if not callbackOk then
+					warn("[CatalogServer] Public inventory page delivery failed:", callbackError)
+				end
+			end
 			if #results >= maximumItems then break end
 			local nextCursor = payload.nextPageCursor or payload.NextPageCursor
 			if type(nextCursor) ~= "string" or nextCursor == "" then break end
@@ -957,7 +971,7 @@ local publicOutfitsLastRequest = {}
 local function getPublicSavedOutfits(userId)
 	local probeOk, probeResponse = pcall(function()
 		return HttpService:RequestAsync({
-			Url = proxyUrl("inventory", "/v2/users/" .. tostring(userId) .. "/inventory/8?limit=1&sortOrder=Desc"),
+			Url = proxyUrl("inventory", "/v2/users/" .. tostring(userId) .. "/inventory/8?limit=100&sortOrder=Desc"),
 			Method = "GET",
 			Headers = { Accept = "application/json" },
 		})
@@ -1089,7 +1103,7 @@ local function inspectPublicOutfits(plr, name)
 	return "publicOutfits", { userId = userId, username = canonicalName, outfits = outfits, partial = state == "partial" }
 end
 
-local function inspectPublicAvatar(plr, name, requestInventory)
+local function inspectPublicAvatar(plr, name, requestInventory, requestId)
 	local ok, userId = pcall(function()
 		return Players:GetUserIdFromNameAsync(name)
 	end)
@@ -1105,12 +1119,21 @@ local function inspectPublicAvatar(plr, name, requestInventory)
 			return "error", "Please wait a moment before searching another public inventory."
 		end
 		publicInventoryLastRequest[plr] = os.clock()
-		local inventory, inventoryState, inventoryError = getPublicInventory(userId)
+		local inventory, inventoryState, inventoryError = getPublicInventory(userId, function(pageItems)
+			if requestId and requestId > 0 and plr.Parent then
+				remote:FireClient(plr, "Progress", requestId, "publicInventoryPage", {
+					userId = userId,
+					username = canonicalName,
+					items = pageItems,
+				})
+			end
+		end)
+
 		if type(inventory) == "table" then
 			return "publicInventory", {
 				userId = userId,
 				username = canonicalName,
-				items = inventory,
+				itemCount = #inventory,
 				partial = inventoryState == "partial",
 			}
 		end
@@ -1379,7 +1402,7 @@ remote.OnServerEvent:Connect(function(plr, action, a, b, requestId)
 		elseif action == "InspectUser" and typeof(a) == "string" and #a >= 3 and #a <= 20 and string.match(a, "^[%w_]+$") then
 			return inspectPublicAvatar(plr, a, false)
 		elseif action == "PublicInventory" and typeof(a) == "string" and #a >= 3 and #a <= 20 and string.match(a, "^[%w_]+$") then
-			return inspectPublicAvatar(plr, a, true)
+			return inspectPublicAvatar(plr, a, true, requestId)
 		elseif action == "PublicOutfits" and typeof(a) == "string" and #a >= 3 and #a <= 20 and string.match(a, "^[%w_]+$") then
 			return inspectPublicOutfits(plr, a)
 		end
