@@ -825,30 +825,84 @@ local PUBLIC_INVENTORY_TYPE_IDS = {
 	57, 58, 61, 64, 65, 66, 67, 68, 69, 70, 71, 72,
 	76, 77, 78, 79, 88, 89, 90, 92,
 }
+
+local catalogPublicOutfitsRateLimitedUntil = 0
+local catalogPublicInventoryRateLimitedUntil = 0
+
+local function getRetryAfterSeconds(response)
+	local headers = response and response.Headers
+
+	if type(headers) == "table" then
+		for name, value in pairs(headers) do
+			if string.lower(tostring(name)) == "retry-after" then
+				local seconds = tonumber(value)
+
+				if seconds and seconds > 0 then
+					return math.clamp(math.ceil(seconds), 1, 300)
+				end
+			end
+		end
+	end
+
+	return 60
+end
+
+local function getRateLimitStatus(untilTime)
+	local remaining = math.max(1, math.ceil(untilTime - os.clock()))
+
+	return "Rate limited, waiting (" .. tostring(remaining) .. " seconds)."
+end
 local PUBLIC_LOOKUP_COOLDOWN = 2
 local publicInventoryLastRequest = {}
 local function getPublicInventory(userId, onPage)
+	local remaining = catalogPublicInventoryRateLimitedUntil - os.clock()
+
+	if remaining > 0 then
+		return nil, "rate_limited",
+			getRateLimitStatus(catalogPublicInventoryRateLimitedUntil)
+	end
+
 	local results, seen = {}, {}
 	local partial = false
 	local maximumItems = 10000
 	local pageSize = 100
-	local maxPagesPerType = 10000
-	local successfulTypes = 0
-	local firstBadRequest
+	local maxPagesPerType = 100
 	local stopAll = false
-	local rateLimited = false
+	local statusMessage = nil
 
 	for _, assetTypeId in ipairs(PUBLIC_INVENTORY_TYPE_IDS) do
 		if #results >= maximumItems or stopAll then
-			if #results >= maximumItems then partial = true end
+			if #results >= maximumItems then
+				partial = true
+			end
 			break
 		end
 
 		local cursor = nil
+
 		for pageIndex = 1, maxPagesPerType do
-			local url = proxyUrl("inventory", "/v2/users/" .. tostring(userId)
-				.. "/inventory/" .. tostring(assetTypeId)
-				.. "?limit=" .. tostring(pageSize) .. "&sortOrder=Desc")
+			remaining = catalogPublicInventoryRateLimitedUntil - os.clock()
+
+			if remaining > 0 then
+				statusMessage = getRateLimitStatus(catalogPublicInventoryRateLimitedUntil)
+
+				if #results > 0 then
+					partial = true
+					stopAll = true
+					break
+				end
+
+				return nil, "rate_limited", statusMessage
+			end
+
+			local url = proxyUrl(
+				"inventory",
+				"/v2/users/" .. tostring(userId)
+					.. "/inventory/" .. tostring(assetTypeId)
+					.. "?limit=" .. tostring(pageSize)
+					.. "&sortOrder=Desc"
+			)
+
 			if cursor and cursor ~= "" then
 				url ..= "&cursor=" .. HttpService:UrlEncode(cursor)
 			end
@@ -857,74 +911,102 @@ local function getPublicInventory(userId, onPage)
 				return HttpService:RequestAsync({
 					Url = url,
 					Method = "GET",
-					Headers = { Accept = "application/json" },
+					Headers = {
+						Accept = "application/json",
+					},
 				})
 			end)
-			if not requestOk then
+
+			if requestOk and response.StatusCode == 429 then
+				local seconds = getRetryAfterSeconds(response)
+
+				catalogPublicInventoryRateLimitedUntil = os.clock() + seconds
+				statusMessage = getRateLimitStatus(catalogPublicInventoryRateLimitedUntil)
+
 				if #results > 0 then
 					partial = true
 					stopAll = true
 					break
 				end
-				return nil, "http_unavailable", tostring(response)
+
+				return nil, "rate_limited", statusMessage
 			end
 
-			if response.StatusCode == 400 then
-				firstBadRequest = firstBadRequest or responseError(response)
-				if pageIndex > 1 then partial = true end
-				break
-			elseif response.StatusCode == 403 then
-				return nil, "private", "This user's inventory is private or inaccessible."
-			elseif response.StatusCode == 429 then
-				partial = true
-				rateLimited = true
-				stopAll = true
-				break
-			elseif not response.Success then
+			if not requestOk or not response.Success then
+				statusMessage = "Unavailable, user's inventory is private."
+
 				if #results > 0 then
 					partial = true
 					stopAll = true
 					break
 				end
-				return nil, "http_error", "Inventory request failed: " .. responseError(response)
+
+				return nil, "unavailable", statusMessage
 			end
 
 			local decodeOk, payload = pcall(function()
 				return HttpService:JSONDecode(response.Body)
 			end)
+
 			if not decodeOk or type(payload) ~= "table" then
+				statusMessage = "Unavailable, user's inventory is private."
+
 				if #results > 0 then
 					partial = true
 					stopAll = true
 					break
 				end
-				return nil, "bad_response", "RoTunnel returned an unreadable inventory response."
+
+				return nil, "unavailable", statusMessage
 			end
 
-			successfulTypes += 1
-			local pageItems = payload.data or payload.Data or payload.items or payload.Items or {}
+			local pageItems = payload.data
+				or payload.Data
+				or payload.items
+				or payload.Items
+				or {}
+
 			local pageResults = {}
+
 			if type(pageItems) == "table" then
 				for _, raw in ipairs(pageItems) do
 					local assetId
+
 					if type(raw) == "table" then
-						assetId = tonumber(raw.assetId or raw.AssetId or raw.id or raw.Id)
+						assetId = tonumber(
+							raw.assetId
+								or raw.AssetId
+								or raw.id
+								or raw.Id
+						)
 					else
 						assetId = tonumber(raw)
 					end
-					if assetId and assetId > 0 and assetId % 1 == 0 and not seen[assetId] then
+
+					if assetId and assetId > 0
+						and assetId % 1 == 0
+						and not seen[assetId] then
+
 						seen[assetId] = true
-						local rawName = type(raw) == "table" and (raw.assetName or raw.AssetName or raw.name or raw.Name) or nil
-						local name = tostring(rawName or ("Item " .. assetId))
-						local typeName = ASSET_TYPE_NAMES[assetTypeId] or "Item"
+
+						local rawName = type(raw) == "table"
+							and (
+								raw.assetName
+								or raw.AssetName
+								or raw.name
+								or raw.Name
+							)
+							or nil
+
 						local normalizedItem = {
 							id = assetId,
-							name = name,
-							typeName = typeName,
+							name = tostring(rawName or ("Item " .. assetId)),
+							typeName = ASSET_TYPE_NAMES[assetTypeId] or "Item",
 						}
 
 						table.insert(results, normalizedItem)
 						table.insert(pageResults, normalizedItem)
+
 						if #results >= maximumItems then
 							partial = true
 							break
@@ -932,6 +1014,7 @@ local function getPublicInventory(userId, onPage)
 					end
 				end
 			end
+
 			if #pageResults > 0 and type(onPage) == "function" then
 				local callbackOk, callbackError = pcall(onPage, pageResults)
 
@@ -939,67 +1022,94 @@ local function getPublicInventory(userId, onPage)
 					warn("[CatalogServer] Public inventory page delivery failed:", callbackError)
 				end
 			end
-			if #results >= maximumItems then break end
+
+			if #results >= maximumItems then
+				break
+			end
+
 			local nextCursor = payload.nextPageCursor or payload.NextPageCursor
-			if type(nextCursor) ~= "string" or nextCursor == "" then break end
+
+			if type(nextCursor) ~= "string" or nextCursor == "" then
+				break
+			end
+
 			if pageIndex >= maxPagesPerType then
 				partial = true
 				break
 			end
-			cursor = nextCursor
-			task.wait(0.08)
-		end
-		task.wait(0.08)
-	end
 
-	if rateLimited and #results == 0 then
-		return nil, "http_error", "RoTunnel rate-limited the inventory lookup. Try again shortly."
-	end
-	if successfulTypes == 0 and firstBadRequest then
-		return nil, "http_error", "RoTunnel rejected the inventory endpoint: " .. firstBadRequest
+			cursor = nextCursor
+			task.wait(0.25)
+		end
+
+		task.wait(0.15)
 	end
 
 	table.sort(results, function(a, b)
-		if a.typeName ~= b.typeName then return a.typeName < b.typeName end
-		if a.name ~= b.name then return string.lower(a.name) < string.lower(b.name) end
+		if a.typeName ~= b.typeName then
+			return a.typeName < b.typeName
+		end
+
+		if a.name ~= b.name then
+			return string.lower(a.name) < string.lower(b.name)
+		end
+
 		return a.id < b.id
 	end)
-	return results, partial and "partial" or "ok"
+
+	return results, partial and "partial" or "ok", statusMessage
 end
 
 local publicOutfitsLastRequest = {}
 local function getPublicSavedOutfits(userId)
-	local probeOk, probeResponse = pcall(function()
-		return HttpService:RequestAsync({
-			Url = proxyUrl("inventory", "/v2/users/" .. tostring(userId) .. "/inventory/8?limit=100&sortOrder=Desc"),
-			Method = "GET",
-			Headers = { Accept = "application/json" },
-		})
-	end)
-	if not probeOk then return nil, "http_unavailable", tostring(probeResponse) end
-	if probeResponse.StatusCode == 403 then return nil, "private", "This user's inventory is private." end
-	if not probeResponse.Success then
-		return nil, "http_error", "Inventory visibility check failed: " .. responseError(probeResponse)
+	local remaining = catalogPublicOutfitsRateLimitedUntil - os.clock()
+
+	if remaining > 0 then
+		return nil, "rate_limited",
+			getRateLimitStatus(catalogPublicOutfitsRateLimitedUntil)
 	end
 
 	local function outfitTimestamp(outfit)
 		local raw = outfit.createdAt or outfit.CreatedAt or outfit.created or outfit.Created
-		if typeof(raw) == "DateTime" then return raw.UnixTimestamp end
-		if type(raw) == "number" then return raw end
+
+		if typeof(raw) == "DateTime" then
+			return raw.UnixTimestamp
+		end
+
+		if type(raw) == "number" then
+			return raw
+		end
+
 		if type(raw) == "string" and raw ~= "" then
-			local ok, date = pcall(function() return DateTime.fromIsoDate(raw) end)
-			if ok and date then return date.UnixTimestamp end
-			local year, month, day, hour, minute, second = raw:match("^(%d%d%d%d)%-(%d%d)%-(%d%d)T(%d%d):(%d%d):(%d%d)")
+			local ok, date = pcall(function()
+				return DateTime.fromIsoDate(raw)
+			end)
+
+			if ok and date then
+				return date.UnixTimestamp
+			end
+
+			local year, month, day, hour, minute, second =
+				raw:match("^(%d%d%d%d)%-(%d%d)%-(%d%d)T(%d%d):(%d%d):(%d%d)")
+
 			if year then
 				local dateOk, parsed = pcall(function()
 					return DateTime.fromUniversalTime(
-						tonumber(year), tonumber(month), tonumber(day),
-						tonumber(hour), tonumber(minute), tonumber(second)
+						tonumber(year),
+						tonumber(month),
+						tonumber(day),
+						tonumber(hour),
+						tonumber(minute),
+						tonumber(second)
 					)
 				end)
-				if dateOk and parsed then return parsed.UnixTimestamp end
+
+				if dateOk and parsed then
+					return parsed.UnixTimestamp
+				end
 			end
 		end
+
 		return 0
 	end
 
@@ -1008,49 +1118,133 @@ local function getPublicSavedOutfits(userId)
 	local page = 1
 	local maxPages = 8
 	local partial = false
+	local statusMessage = nil
+
 	while page <= maxPages do
-		local url = proxyUrl("avatar", "/v2/avatar/users/" .. tostring(userId)
-			.. "/outfits?outfitType=Avatar&itemsPerPage=50&isEditable=true")
+		remaining = catalogPublicOutfitsRateLimitedUntil - os.clock()
+
+		if remaining > 0 then
+			statusMessage = getRateLimitStatus(catalogPublicOutfitsRateLimitedUntil)
+
+			if #results > 0 then
+				partial = true
+				break
+			end
+
+			return nil, "rate_limited", statusMessage
+		end
+
+		local url = proxyUrl(
+			"avatar",
+			"/v2/avatar/users/" .. tostring(userId)
+				.. "/outfits?outfitType=Avatar&itemsPerPage=50&isEditable=true"
+		)
+
 		if paginationToken and paginationToken ~= "" then
 			url ..= "&paginationToken=" .. HttpService:UrlEncode(paginationToken)
 		end
+
 		local requestOk, response = pcall(function()
 			return HttpService:RequestAsync({
 				Url = url,
 				Method = "GET",
-				Headers = { Accept = "application/json" },
+				Headers = {
+					Accept = "application/json",
+				},
 			})
 		end)
-		if not requestOk then return nil, "http_unavailable", tostring(response) end
-		if response.StatusCode == 403 then return nil, "private", "Saved outfits are not publicly visible." end
-		if response.StatusCode == 400 then
-			return nil, "http_error", "RoTunnel rejected the outfits endpoint: " .. responseError(response)
-		end
-		if not response.Success then
-			return nil, "http_error", "Outfit request failed: " .. responseError(response)
+
+		if requestOk and response.StatusCode == 429 then
+			local seconds = getRetryAfterSeconds(response)
+
+			catalogPublicOutfitsRateLimitedUntil = os.clock() + seconds
+			statusMessage = getRateLimitStatus(catalogPublicOutfitsRateLimitedUntil)
+
+			if #results > 0 then
+				partial = true
+				break
+			end
+
+			return nil, "rate_limited", statusMessage
 		end
 
-		local decodeOk, payload = pcall(function() return HttpService:JSONDecode(response.Body) end)
-		if not decodeOk or type(payload) ~= "table" then
-			return nil, "bad_response", "RoTunnel returned an unreadable outfits response."
+		if not requestOk or not response.Success then
+			statusMessage = "Unavailable, user's outfits are private."
+
+			if #results > 0 then
+				partial = true
+				break
+			end
+
+			return nil, "unavailable", statusMessage
 		end
-		local data = payload.data or payload.Data or payload.outfits or payload.Outfits or {}
-		if type(data) ~= "table" then data = {} end
+
+		local decodeOk, payload = pcall(function()
+			return HttpService:JSONDecode(response.Body)
+		end)
+
+		if not decodeOk or type(payload) ~= "table" then
+			statusMessage = "Unavailable, user's outfits are private."
+
+			if #results > 0 then
+				partial = true
+				break
+			end
+
+			return nil, "unavailable", statusMessage
+		end
+
+		local data = payload.data
+			or payload.Data
+			or payload.outfits
+			or payload.Outfits
+			or {}
+
+		if type(data) ~= "table" then
+			data = {}
+		end
+
 		for _, outfit in ipairs(data) do
-			if type(outfit) ~= "table" then continue end
-			local id = tonumber(outfit.id or outfit.Id or outfit.outfitId or outfit.OutfitId)
-			local private = outfit.isPrivate == true or outfit.IsPrivate == true
-				or outfit.isPublic == false or outfit.IsPublic == false
+			if type(outfit) ~= "table" then
+				continue
+			end
+
+			local id = tonumber(
+				outfit.id
+					or outfit.Id
+					or outfit.outfitId
+					or outfit.OutfitId
+			)
+
+			local private = outfit.isPrivate == true
+				or outfit.IsPrivate == true
+				or outfit.isPublic == false
+				or outfit.IsPublic == false
+
 			local editable = outfit.isEditable
-			if editable == nil then editable = outfit.IsEditable end
+
+			if editable == nil then
+				editable = outfit.IsEditable
+			end
+
 			local outfitType = outfit.outfitType or outfit.OutfitType
 			local isAvatarOutfit = outfitType == nil or tostring(outfitType) == "Avatar"
-			if id and id > 0 and id % 1 == 0 and isAvatarOutfit and not private
-				and editable ~= false and not seen[id] then
+
+			if id and id > 0 and id % 1 == 0
+				and isAvatarOutfit
+				and not private
+				and editable ~= false
+				and not seen[id] then
+
 				seen[id] = true
+
 				table.insert(results, {
 					id = id,
-					name = tostring(outfit.name or outfit.Name or ("Outfit " .. tostring(id))),
+					name = tostring(
+						outfit.name
+							or outfit.Name
+							or ("Outfit " .. tostring(id))
+					),
 					createdAt = outfitTimestamp(outfit),
 					isEditable = true,
 					_sourceOrder = #results + 1,
@@ -1059,33 +1253,54 @@ local function getPublicSavedOutfits(userId)
 		end
 
 		local nextToken = payload.paginationToken or payload.PaginationToken
-		if type(nextToken) ~= "string" or nextToken == "" then break end
+
+		if type(nextToken) ~= "string" or nextToken == "" then
+			break
+		end
+
 		if seenTokens[nextToken] then
 			partial = true
 			break
 		end
+
 		seenTokens[nextToken] = true
+
 		if page >= maxPages then
 			partial = true
 			break
 		end
+
 		paginationToken = nextToken
 		page += 1
-		task.wait(0.12)
+
+		-- Slightly space out paginated requests.
+		task.wait(0.5)
 	end
 
 	local hasTimestamps = false
+
 	for _, outfit in ipairs(results) do
-		if outfit.createdAt > 0 then hasTimestamps = true; break end
+		if outfit.createdAt > 0 then
+			hasTimestamps = true
+			break
+		end
 	end
+
 	if hasTimestamps then
 		table.sort(results, function(a, b)
-			if a.createdAt ~= b.createdAt then return a.createdAt > b.createdAt end
+			if a.createdAt ~= b.createdAt then
+				return a.createdAt > b.createdAt
+			end
+
 			return a._sourceOrder < b._sourceOrder
 		end)
 	end
-	for _, outfit in ipairs(results) do outfit._sourceOrder = nil end
-	return results, partial and "partial" or "ok"
+
+	for _, outfit in ipairs(results) do
+		outfit._sourceOrder = nil
+	end
+
+	return results, partial and "partial" or "ok", statusMessage
 end
 
 local function inspectPublicOutfits(plr, name)
@@ -1135,7 +1350,12 @@ local function inspectPublicAvatar(plr, name, requestInventory, requestId)
 				username = canonicalName,
 				itemCount = #inventory,
 				partial = inventoryState == "partial",
+				statusMessage = inventoryError,
 			}
+		end
+
+		if inventoryState == "rate_limited" then
+			return "error", inventoryError
 		end
 		local descOk, desc = pcall(function() return getUserDescription(userId) end)
 		local wornItems = {}
@@ -1148,8 +1368,8 @@ local function inspectPublicAvatar(plr, name, requestInventory, requestId)
 			userId = userId,
 			username = canonicalName,
 			items = wornItems,
-			inventoryPrivate = inventoryState == "private",
-			warning = tostring(inventoryError or inventoryState),
+			inventoryPrivate = true,
+			warning = "Unavailable, user's inventory is private.",
 		}
 	end
 
