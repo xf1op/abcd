@@ -376,8 +376,8 @@ TABS = {
 local SORTS = {}
 for _, entry in ipairs({
 	{ "Relevance", "Relevance" }, { "Bestselling", "Bestselling" },
-	{ "Newest", "RecentlyCreated" }, { "Price: low", "PriceLowToHigh" },
-	{ "Price: high", "PriceHighToLow" },
+	{ "Newest", "RecentlyCreated" }, { "Lowest Price", "PriceLowToHigh" },
+	{ "Highest Price", "PriceHighToLow" },
 	}) do
 	local value = H.enumItem(Enum.CatalogSortType, entry[2])
 	if value then table.insert(SORTS, { label = entry[1], value = value }) end
@@ -508,27 +508,46 @@ end
 function H.new(className, properties, parent)
 	local object = Instance.new(className)
 	local deferredCanvas
+
 	for property, original in pairs(properties) do
 		local value = original
+
 		if typeof(value) == "UDim2" then
-			if property == "CanvasSize" then deferredCanvas = value
-			elseif property == "Position" or property == "Size" or property == "CellSize" or property == "CellPadding" then
+			if property == "CanvasSize" then
+				deferredCanvas = value
+			elseif property == "Position" or property == "Size"
+				or property == "CellSize" or property == "CellPadding" then
 				value = H.toScaleUDim2(parent, value)
 			end
 		elseif typeof(value) == "UDim" and parent and parent:IsA("GuiObject") then
 			if property == "Padding" then
 				value = H.toScaleUDim(parent, value, properties.FillDirection == Enum.FillDirection.Vertical and "Y" or "X")
-			elseif property == "PaddingLeft" or property == "PaddingRight" then value = H.toScaleUDim(parent, value, "X")
-			elseif property == "PaddingTop" or property == "PaddingBottom" then value = H.toScaleUDim(parent, value, "Y") end
+			elseif property == "PaddingLeft" or property == "PaddingRight" then
+				value = H.toScaleUDim(parent, value, "X")
+			elseif property == "PaddingTop" or property == "PaddingBottom" then
+				value = H.toScaleUDim(parent, value, "Y")
+			end
 		end
+
 		object[property] = value
 	end
+
+	if object:IsA("GuiButton") then
+		object.AutoButtonColor = true
+	end
+
 	object.Parent = parent
+
 	if object:IsA("GuiObject") and typeof(object.Size) == "UDim2" then
 		designSizes[object] = H.estimateDesignSize(object, parent, object.Size)
 	end
+
 	H.registerTextObject(object)
-	if deferredCanvas then object.CanvasSize = H.toScaleUDim2(object, deferredCanvas) end
+
+	if deferredCanvas then
+		object.CanvasSize = H.toScaleUDim2(object, deferredCanvas)
+	end
+
 	return object
 end
 function H.round(object, radius)
@@ -562,27 +581,39 @@ end
 
 function H.mkButton(parent, text, width, height, color)
 	local baseColor = color or C.card
+
 	local button = H.new("TextButton", {
-		Text = text, Size = UDim2.fromOffset(width, height), BackgroundColor3 = baseColor,
-		TextColor3 = C.text, Font = FM, TextSize = 16, TextTruncate = Enum.TextTruncate.AtEnd,
-		AutoButtonColor = false,
+		Text = text,
+		Size = UDim2.fromOffset(width, height),
+		BackgroundColor3 = baseColor,
+		TextColor3 = C.text,
+		Font = FM,
+		TextSize = 16,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		AutoButtonColor = true,
 	}, parent)
+
 	H.applyTouchScale(button, 1.06)
 	H.round(button, 10)
-	local outline = H.new("UIStroke", { Color = color and C.accent or C.line, Transparency = 0.45, Thickness = 1 }, button)
-	local returnColor = baseColor
+
+	local outline = H.new("UIStroke", {
+		Color = color and C.accent or C.line,
+		Transparency = 0.45,
+		Thickness = 1,
+	}, button)
+
 	button.MouseEnter:Connect(function()
-		returnColor = button.BackgroundColor3
-		local current = returnColor
-		TweenService:Create(button, TweenInfo.new(0.12), {
-			BackgroundColor3 = Color3.new(math.min(current.R + 0.055, 1), math.min(current.G + 0.055, 1), math.min(current.B + 0.055, 1)),
+		TweenService:Create(outline, TweenInfo.new(0.12), {
+			Transparency = 0.12,
 		}):Play()
-		TweenService:Create(outline, TweenInfo.new(0.12), { Transparency = 0.12 }):Play()
 	end)
+
 	button.MouseLeave:Connect(function()
-		TweenService:Create(button, TweenInfo.new(0.16), { BackgroundColor3 = returnColor }):Play()
-		TweenService:Create(outline, TweenInfo.new(0.16), { Transparency = 0.45 }):Play()
+		TweenService:Create(outline, TweenInfo.new(0.16), {
+			Transparency = 0.45,
+		}):Play()
 	end)
+
 	return button
 end
 function H.mkBox(parent, placeholder, width, height)
@@ -1590,26 +1621,63 @@ for index, sort in ipairs(SORTS) do
 end
 
 local linkRow = H.new("Frame", {
-	BackgroundTransparency = 1, Position = UDim2.fromOffset(14, 124), Size = UDim2.new(1, -28, 0, 38),
+	BackgroundTransparency = 1,
+	Position = UDim2.fromOffset(14, 124),
+	Size = UDim2.new(1, -28, 0, 38),
 }, center)
+
 local linkLabel = H.label(linkRow, "Item ID/Link", 0, 0, 105, 38, 11, C.sub, FB)
 linkLabel.TextYAlignment = Enum.TextYAlignment.Center
-local urlBox = H.mkBox(linkRow, "Paste item ID or Roblox catalog/bundle URL", 850, 38)
+
+local urlBox = H.mkBox(linkRow, "Item ID or URL", 850, 38)
 H.setLayout(urlBox, "Position", UDim2.fromOffset(112, 0))
 
 local publicAvatarRow = H.new("Frame", {
-	Name = "PublicAvatarSearchRow", BackgroundTransparency = 1,
-	Position = UDim2.fromOffset(14, 124), Size = UDim2.new(1, -28, 0, 38), Visible = false,
+	Name = "PublicAvatarSearchRow",
+	BackgroundTransparency = 1,
+	Position = UDim2.fromOffset(14, 124),
+	Size = UDim2.new(1, -28, 0, 38),
+	Visible = false,
 }, center)
-local publicAvatarUserBox = H.mkBox(publicAvatarRow, "Roblox username (not display name)", 300, 38)
-local inspectPublicAvatarBtn = H.mkButton(publicAvatarRow, "Public inventory", 168, 38, C.accent)
+
+local publicAvatarUserBox = H.mkBox(publicAvatarRow, "Username", 300, 38)
+
+local inspectPublicAvatarBtn = H.mkButton(
+	publicAvatarRow, "Public inventory", 150, 38
+)
 H.setLayout(inspectPublicAvatarBtn, "Position", UDim2.fromOffset(310, 0))
-local publicOutfitsBtn = H.mkButton(publicAvatarRow, "Search outfits", 150, 38, C.card)
-H.setLayout(publicOutfitsBtn, "Position", UDim2.fromOffset(488, 0))
-local myOutfitsBtn = H.mkButton(publicAvatarRow, "My outfits", 130, 38, C.card)
-H.setLayout(myOutfitsBtn, "Position", UDim2.fromOffset(648, 0))
-local publicAvatarHint = H.label(publicAvatarRow, "Public visibility only · exact Roblox username required", 790, 0, 500, 38, 12, C.sub, F)
-publicAvatarHint.TextYAlignment = Enum.TextYAlignment.Center
+
+local publicOutfitsBtn = H.mkButton(
+	publicAvatarRow, "Search outfits", 150, 38
+)
+H.setLayout(publicOutfitsBtn, "Position", UDim2.fromOffset(478, 0))
+
+local myOutfitsBtn = H.mkButton(
+	publicAvatarRow, "My outfits", 150, 38
+)
+H.setLayout(myOutfitsBtn, "Position", UDim2.fromOffset(646, 0))
+
+-- Public search controls share one loading state.
+H.publicSearchLocked = false
+
+H.publicSearchButtons = {
+	inspectPublicAvatarBtn,
+	publicOutfitsBtn,
+	myOutfitsBtn,
+}
+
+H.setPublicSearchLocked = function(locked)
+	H.publicSearchLocked = locked == true
+
+	publicAvatarUserBox.TextEditable = not H.publicSearchLocked
+
+	for _, button in ipairs(H.publicSearchButtons) do
+		button.Active = not H.publicSearchLocked
+		button.Selectable = not H.publicSearchLocked
+		button.AutoButtonColor = not H.publicSearchLocked
+		button.TextColor3 = H.publicSearchLocked and C.sub or C.text
+	end
+end
 
 local chipHolder = H.new("ScrollingFrame", {
 	Name = "CategoryChips", BackgroundTransparency = 1,
@@ -1936,6 +2004,9 @@ local function beginBusy(message)
 		if activeRequestId == requestId and busy then
 			busy = false
 			activeRequestId = nil
+
+			H.setPublicSearchLocked(false)
+
 			setStatus("Timed out. You can try again.")
 		end
 	end)
@@ -1943,9 +2014,13 @@ local function beginBusy(message)
 end
 local function failBusy(requestId, message)
 	warn("[CatalogUI] " .. tostring(message))
+
 	if activeRequestId == requestId and busy then
 		busy = false
 		activeRequestId = nil
+
+		H.setPublicSearchLocked(false)
+
 		setStatus(message)
 	end
 end
@@ -2537,7 +2612,7 @@ local activeInventoryItems = nil
 local inventoryRenderedCount = 0
 H.inventoryRenderWorkerToken = nil
 H.pendingInventoryRenderCount = 0
-local INVENTORY_INITIAL_RENDER_COUNT = 40
+local INVENTORY_INITIAL_RENDER_COUNT = 32
 local INVENTORY_BATCH_SIZE = 100
 local INVENTORY_PAGE_DELAY_SECONDS = 0
 local renderMoreInventoryTiles
@@ -4547,7 +4622,7 @@ local function rebuildChips()
 end
 
 H.refreshFilterLabels = function()
-	sortBtn.Text = "Sort: " .. SORTS[state.sort].label .. "  ▾"
+	sortBtn.Text = "Sort: ".. SORTS[state.sort].label
 	for index, option in ipairs(sortOptionButtons) do option.BackgroundColor3 = index == state.sort and C.accent or C.card end
 	saleBtn.Text = SALES[state.sale].label
 	offBtn.Text = state.offsale and "Offsale: On" or "Offsale: Off"
@@ -4665,55 +4740,83 @@ creatorBox.FocusLost:Connect(function()
 	end
 end)
 
-local function inspectPublicAvatar()
+H.inspectPublicAvatar = function()
+	if H.publicSearchLocked then return end
+
 	local username = H.trim(publicAvatarUserBox.Text)
-	if #username < 3 or #username > 20 or not username:match("^[%w_]+$") then
-		setStatus("Enter a valid Roblox username (not a display name)")
+
+	if #username < 3 or #username > 20
+		or not username:match("^[%w_]+$") then
+		setStatus("Invalid username")
 		return
 	end
-	local requestId = beginBusy("Checking public inventory for " .. username .. "...")
 
-	if requestId then
-		publicInventoryRequestId = requestId
-		publicInventoryStreamRequestId = nil
-		publicInventoryViewActive = false
-		publicInventoryReceivedCount = 0
-		publicInventoryUsername = username
+	local requestId = beginBusy("Loading public inventory...")
 
-		remote:FireServer("PublicInventory", username, nil, requestId)
-	end
-	if requestId then
-		publicInventoryRequestId = nil
-		publicInventoryStreamRequestId = nil
-		publicInventoryViewActive = false
+	if not requestId then return end
 
-		table.clear(publicInventoryAllItems)
-		table.clear(publicInventoryItems)
+	publicInventoryRequestId = requestId
+	publicInventoryStreamRequestId = nil
+	publicInventoryViewActive = false
+	publicInventoryReceivedCount = 0
+	publicInventoryUsername = username
 
-		remote:FireServer("PublicOutfits", username, nil, requestId)
-	end
+	table.clear(publicInventoryAllItems)
+	table.clear(publicInventoryItems)
+
+	H.setPublicSearchLocked(true)
+
+	-- Only request inventory here.
+	-- Outfits are loaded separately by the Search outfits button.
+	remote:FireServer("PublicInventory", username, nil, requestId)
 end
 
-local function inspectPublicOutfits()
+H.inspectPublicOutfits = function()
+	if H.publicSearchLocked then return end
+
 	local username = H.trim(publicAvatarUserBox.Text)
-	if #username < 3 or #username > 20 or not username:match("^[%w_]+$") then
-		setStatus("Enter a valid Roblox username (not a display name)")
+
+	if #username < 3 or #username > 20
+		or not username:match("^[%w_]+$") then
+		setStatus("Invalid username")
 		return
 	end
-	local requestId = beginBusy("Checking public outfits for " .. username .. "...")
-	if requestId then remote:FireServer("PublicOutfits", username, nil, requestId) end
+
+	local requestId = beginBusy("Loading public outfits...")
+
+	if not requestId then return end
+
+	-- Clear previous public inventory state.
+	publicInventoryRequestId = nil
+	publicInventoryStreamRequestId = nil
+	publicInventoryViewActive = false
+
+	table.clear(publicInventoryAllItems)
+	table.clear(publicInventoryItems)
+
+	H.setPublicSearchLocked(true)
+
+	remote:FireServer("PublicOutfits", username, nil, requestId)
 end
-inspectPublicAvatarBtn.Activated:Connect(inspectPublicAvatar)
-publicOutfitsBtn.Activated:Connect(inspectPublicOutfits)
+
+inspectPublicAvatarBtn.Activated:Connect(H.inspectPublicAvatar)
+publicOutfitsBtn.Activated:Connect(H.inspectPublicOutfits)
 
 myOutfitsBtn.Activated:Connect(function()
+	if H.publicSearchLocked then return end
+
 	publicAvatarUserBox.Text = ""
 	state.keyword = searchBox.Text
-	if TABS[curTab].kind == "outfits" then H.load() end
+
+	if TABS[curTab].kind == "outfits" then
+		H.load()
+	end
 end)
 
 publicAvatarUserBox.FocusLost:Connect(function(enterPressed)
-	if enterPressed then inspectPublicOutfits() end
+	if enterPressed and not H.publicSearchLocked then
+		H.inspectPublicOutfits()
+	end
 end)
 
 local currentDetailData
@@ -5816,6 +5919,7 @@ remote.OnClientEvent:Connect(function(kind, requestId, code, detail)
 	if kind ~= "Result" or requestId ~= activeRequestId then return end
 	busy = false
 	activeRequestId = nil
+	H.setPublicSearchLocked(false)
 	if code == "publicOutfits" and type(detail) == "table" then
 		publicInventoryViewActive = false
 		publicInventoryRequestId = nil
@@ -5971,18 +6075,59 @@ remote.OnClientEvent:Connect(function(kind, requestId, code, detail)
 		if bodyParts > 0 then message ..= " · " .. tostring(bodyParts) .. " body parts included" end
 		if skipped + overLimit > 0 then message ..= " · " .. tostring(skipped + overLimit) .. " skipped" end
 	end
+	if code == "publicOutfits" and type(detail) == "table" then
+		local outfitCount = type(detail.outfits) == "table"
+			and #detail.outfits
+			or 0
+
+		local suffix = ""
+
+		if detail.statusMessage then
+			suffix = " · " .. tostring(detail.statusMessage)
+		elseif detail.partial then
+			suffix = " · partial result"
+		end
+
+		message = "Public saved outfits for "
+			.. tostring(detail.username or "player")
+			.. " · " .. tostring(outfitCount)
+			.. " outfits"
+			.. suffix
+	end
+
+	if code == "publicAvatar" and type(detail) == "table"
+		and detail.inventoryPrivate then
+
+		message = "Unavailable, user's inventory is private."
+	end
 	if code == "publicInventory" and type(detail) == "table" then
 		local itemCount = tonumber(detail.itemCount) or publicInventoryReceivedCount
-		local suffix = detail.partial and " · partial result" or ""
+
+		local suffix = ""
+
+		if detail.statusMessage then
+			suffix = " · " .. tostring(detail.statusMessage)
+		elseif detail.partial then
+			suffix = " · partial result"
+		end
 
 		message = "Public inventory for "
 			.. tostring(detail.username or publicInventoryUsername)
 			.. " · " .. tostring(itemCount)
-			.. " items" .. suffix
+			.. " items"
+			.. suffix
 			.. " · scroll to load more"
 	end
 	if not message then
-		message = "Couldn't apply: " .. string.sub(tostring(detail or code), 1, 90)
+		local detailMessage = tostring(detail or code)
+
+		if detailMessage:match("^Rate limited, waiting")
+			or detailMessage:match("^Unavailable, user's") then
+
+			message = detailMessage
+		else
+			message = "Couldn't apply: " .. string.sub(detailMessage, 1, 90)
+		end
 	end
 	setStatus(message)
 	if code ~= "error" and code ~= "busy" and code ~= "nouser" then
