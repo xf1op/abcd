@@ -1644,15 +1644,13 @@ H.resultsGrid = H.new("UIGridLayout", {
 
 H.inventoryCanvasItemCount = nil
 
-H.publicInventory = {
-	viewActive = false,
-	allItems = {},
-	items = {},
-	requestId = nil,
-	streamRequestId = nil,
-	receivedCount = 0,
-	username = "",
-}
+local publicInventoryViewActive = false
+local publicInventoryAllItems = {}
+local publicInventoryItems = {}
+local publicInventoryRequestId = nil
+local publicInventoryStreamRequestId = nil
+local publicInventoryReceivedCount = 0
+local publicInventoryUsername = ""
 
 function H.getCatalogUiScale()
 	return math.max(0.30, math.min(root.AbsoluteSize.X / 1920, root.AbsoluteSize.Y / 1080))
@@ -4029,7 +4027,7 @@ do
 		end
 	end
 
-	local function submitSave(kind)
+	H.submitSave = function(kind)
 		local selected = {}
 		for id, enabled in pairs(saveSelected) do
 			if enabled and saveOwned[id] then selected[id] = true end
@@ -4071,7 +4069,7 @@ do
 		end
 	end
 
-	local function refreshSaveRowStates()
+	H.refreshSaveRowStates = function()
 		for _, row in ipairs(saveRows) do
 			local id = tonumber(row.Name:match("SaveItem_(%d+)"))
 			if id and saveOwned[id] then
@@ -4094,14 +4092,14 @@ do
 	H.saveCancelBtn.Activated:Connect(closeSaveReview)
 	H.saveSelectAllBtn.Activated:Connect(function()
 		for id in pairs(saveOwned) do saveSelected[id] = true end
-		refreshSaveRowStates()
+		H.refreshSaveRowStates()
 	end)
 	H.saveSelectNoneBtn.Activated:Connect(function()
 		table.clear(saveSelected)
-		refreshSaveRowStates()
+		H.refreshSaveRowStates()
 	end)
-	H.saveAvatarBtn.Activated:Connect(function() submitSave("avatar") end)
-	H.saveOutfitBtn.Activated:Connect(function() submitSave("outfit") end)
+	H.saveAvatarBtn.Activated:Connect(function() H.submitSave("avatar") end)
+	H.saveOutfitBtn.Activated:Connect(function() H.submitSave("outfit") end)
 	H.saveToRobloxBtn.Activated:Connect(openSaveReview)
 
 	AvatarEditorService.PromptSaveAvatarCompleted:Connect(function(result)
@@ -4127,16 +4125,16 @@ do
 	end)
 
 	local bulkPurchaseCooldown = false
-	local bulkPurchaseCooldownToken = 0
+	H.bulkPurchaseCooldownToken = 0
 	local purchaseButtonText = "Purchase All (up to 20)"
 
-	local function beginBulkPurchaseCooldown()
+	H.beginBulkPurchaseCooldown = function()
 		bulkPurchaseCooldown = true
-		bulkPurchaseCooldownToken += 1
-		local token = bulkPurchaseCooldownToken
+		H.bulkPurchaseCooldownToken += 1
+		local token = H.bulkPurchaseCooldownToken
 		H.purchaseAllBtn.Text = "Please wait..."
 		task.delay(2, function()
-			if bulkPurchaseCooldownToken ~= token then return end
+			if H.bulkPurchaseCooldownToken ~= token then return end
 			bulkPurchaseCooldown = false
 			if H.purchaseAllBtn and H.purchaseAllBtn.Parent then
 				H.purchaseAllBtn.Text = purchaseButtonText
@@ -4144,7 +4142,7 @@ do
 		end)
 	end
 
-	local function getBulkPurchaseLines()
+	H.getBulkPurchaseLines = function()
 		local lines, seen, truncated = {}, {}, false
 		local assetType = H.enumItem(Enum.MarketplaceProductType, "AvatarAsset")
 		if not assetType then
@@ -4201,7 +4199,7 @@ do
 			return
 		end
 
-		local lines, errorText, truncated = getBulkPurchaseLines()
+		local lines, errorText, truncated = H.getBulkPurchaseLines()
 		if not lines then
 			setStatus(errorText)
 			return
@@ -4211,7 +4209,7 @@ do
 			return
 		end
 
-		beginBulkPurchaseCooldown()
+		H.beginBulkPurchaseCooldown()
 		if truncated then
 			setStatus("Opening purchase for the first 20 items.")
 		else
@@ -4886,7 +4884,7 @@ local function getSubItemMetadata(item)
 	return cached
 end
 
-local function updateBundleContentRow(item)
+H.updateBundleContentRow = function(item)
 	local rowData = bundleContentRows[item]
 	if not rowData then return end
 	rowData.nameLabel.Text = item.name or "Loading item details..."
@@ -4914,7 +4912,7 @@ H.refreshBundleContentBadges = function()
 	end
 end
 
-local function discoverOutfitBundles(entries, detailToken)
+H.discoverOutfitBundles = function(entries, detailToken)
 	local assets, wantedIds, sortedIds, assetTypes = {}, {}, {}, {}
 	for _, item in ipairs(entries) do
 		local id = tonumber(item.Id or item.id)
@@ -5165,7 +5163,7 @@ local function discoverOutfitBundles(entries, detailToken)
 	return entries
 end
 
-local function enrichBundleContents(generation)
+H.enrichBundleContents = function(generation)
 	task.spawn(function()
 		local total, unavailableCount = 0, 0
 		local itemCount = #bundleContentEntries
@@ -5220,7 +5218,7 @@ local function enrichBundleContents(generation)
 	end)
 end
 
-local function renderMoreBundleContents()
+H.renderMoreBundleContents = function()
 	if bundleContentRendering then return 0 end
 	local firstIndex = bundleContentRendered + 1
 	local lastIndex = math.min(#bundleContentEntries, bundleContentRendered + BUNDLE_CONTENT_BATCH_SIZE)
@@ -5284,7 +5282,7 @@ local function renderMoreBundleContents()
 		row.InputBegan:Connect(function(input)
 			if input.UserInputType == Enum.UserInputType.MouseButton2 then H.openItemDetails(detailData) end
 		end)
-		updateBundleContentRow(item)
+		H.updateBundleContentRow(item)
 	end
 	bundleContentRendered = lastIndex
 	updateBundleContentsCanvas()
@@ -5296,7 +5294,7 @@ local function renderMoreBundleContents()
 	return lastIndex - firstIndex + 1
 end
 
-local function showBundleContents(items, animationBundle, bodyBundle, dynamicHeadOnly, isOutfitContents, detailToken)
+H.showBundleContents = function(items, animationBundle, bodyBundle, dynamicHeadOnly, isOutfitContents, detailToken)
 	clearBundleContents()
 	bundleContentIsOutfit = isOutfitContents == true
 	bundleContentOutfitId = bundleContentIsOutfit and currentDetailData and currentDetailData.id or nil
@@ -5348,10 +5346,10 @@ local function showBundleContents(items, animationBundle, bodyBundle, dynamicHea
 		return
 	end
 
-	renderMoreBundleContents()
+	H.renderMoreBundleContents()
 	bundleItemsScroll.CanvasPosition = Vector2.zero
 	updateBundleContentsCanvas()
-	enrichBundleContents(bundleContentGeneration)
+	H.enrichBundleContents(bundleContentGeneration)
 end
 
 bundleItemsScroll:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
@@ -5367,11 +5365,11 @@ bundleItemsScroll:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
 	local threshold = math.min(math.max(50, viewportHeight * 0.18), maxScroll * 0.65)
 	local visibleBottom = bundleItemsScroll.CanvasPosition.Y + viewportHeight
 	if visibleBottom >= canvasHeight - threshold then
-		renderMoreBundleContents()
+		H.renderMoreBundleContents()
 	end
 end)
 
-local function parseCatalogLink(raw)
+H.parseCatalogLink = function(raw)
 	local value = H.trim(raw)
 	local bundleId = value:match("/bundles/(%d+)")
 	local assetId = value:match("/catalog/(%d+)") or value:match("/library/(%d+)")
@@ -5477,9 +5475,9 @@ H.openItemDetails = function(data)
 			bundleItemsTitle.Text = "OUTFIT CONTENTS"
 			bundleItemsTitle.Visible = true
 			bundleItemsScroll.Visible = true
-			local mergedEntries = discoverOutfitBundles(entries, token)
+			local mergedEntries = H.discoverOutfitBundles(entries, token)
 			if token ~= detailLoadToken or not detailOverlay.Visible then return end
-			showBundleContents(mergedEntries, false, false, false, true, token)
+			H.showBundleContents(mergedEntries, false, false, false, true, token)
 			return
 		end
 		local ok, info
@@ -5638,15 +5636,15 @@ H.openItemDetails = function(data)
 					or (bodyBundle and "CHARACTER BODY PARTS · FACE ITEMS EXCLUDED" or "ITEMS INCLUDED IN THIS BUNDLE"))
 			bundleItemsTitle.Visible = true
 			bundleItemsScroll.Visible = true
-			showBundleContents(info.BundledItems or info.Items, animationBundle, bodyBundle, dynamicHeadBundle, false, token)
+			H.showBundleContents(info.BundledItems or info.Items, animationBundle, bodyBundle, dynamicHeadBundle, false, token)
 		else
 			detailDescription.Visible = true
 			detailDescription.Text = tostring(info.Description or info.DescriptionText or "No description was provided.")
 		end
 	end)
 end
-local function previewCatalogLink()
-	local id, bundleFlag = parseCatalogLink(urlBox.Text)
+H.previewCatalogLink = function()
+	local id, bundleFlag = H.parseCatalogLink(urlBox.Text)
 	if not id or id <= 0 or id >= 1e13 then
 		setStatus("Enter a valid Roblox catalog/bundle URL or numeric item ID.")
 		return
@@ -5654,7 +5652,7 @@ local function previewCatalogLink()
 	H.openItemDetails({ id = id, name = "Catalog item " .. tostring(id), bundle = bundleFlag == true, auto = bundleFlag == nil, typeName = nil })
 end
 urlBox.FocusLost:Connect(function()
-	if H.trim(urlBox.Text) ~= "" then previewCatalogLink() end
+	if H.trim(urlBox.Text) ~= "" then H.previewCatalogLink() end
 end)
 
 H.onUnequipRequested = function(assetId, typeName)
@@ -5666,11 +5664,11 @@ H.onUnequipRequested = function(assetId, typeName)
 	local requestId = beginBusy("Removing " .. H.prettyType(typeName) .. "...")
 	if requestId then remote:FireServer("Unequip", numericId, nil, requestId) end
 end
-local function requestUnequipAll()
+H.requestUnequipAll = function()
 	local requestId = beginBusy("Unequipping all avatar items...")
 	if requestId then remote:FireServer("UnequipAll", nil, nil, requestId) end
 end
-unequipAllBtn.Activated:Connect(requestUnequipAll)
+unequipAllBtn.Activated:Connect(H.requestUnequipAll)
 detailCloseBtn.Activated:Connect(function()
 	detailLoadToken += 1
 	detailOverlay.Visible = false
@@ -6000,8 +5998,8 @@ remote.OnClientEvent:Connect(function(kind, requestId, code, detail)
 end)
 
 H.refreshFilterLabels()
-local opened = false
-local function setCatalogVisible(visible)
+H.opened = false
+H.setCatalogVisible = function(visible)
 	player.CameraMinZoomDistance = visible and 5 or 0.5
 	main.Visible = visible
 	toggleBtn.Visible = not visible
@@ -6012,16 +6010,16 @@ local function setCatalogVisible(visible)
 		if H.saveOverlay then H.saveOverlay.Visible = false end
 	end
 end
-mainCloseBtn.Activated:Connect(function() setCatalogVisible(false) end)
+mainCloseBtn.Activated:Connect(function() H.setCatalogVisible(false) end)
 toggleBtn.Activated:Connect(function()
 	if main.Visible then return end
-	setCatalogVisible(true)
+	H.setCatalogVisible(true)
 	if refreshLocalWearingSnapshot then refreshLocalWearingSnapshot() end
 	task.delay(0.65, function()
 		if main.Visible and refreshLocalWearingSnapshot then refreshLocalWearingSnapshot() end
 	end)
-	if not opened then
-		opened = true
+	if not H.opened then
+		H.opened = true
 		setTab(1)
 	end
 	snapshotState.request()
