@@ -1819,33 +1819,74 @@ function H.updateResultsGridSizing()
 	task.defer(H.updateResultsCanvas)
 end
 H.resultsCullQueued = false
+
 H.updateResultsTileVisibility = function()
 	if not results.Parent then return end
-	local viewportTop = results.AbsolutePosition.Y + resultsPadding.PaddingTop.Offset
-	local viewportBottom = results.AbsolutePosition.Y + results.AbsoluteSize.Y - resultsPadding.PaddingBottom.Offset
-	local overscan = math.max(H.resultsGrid.CellSize.Y.Offset * 1.4, results.AbsoluteSize.Y * 0.12)
+
+	local canvasY = results.CanvasPosition.Y
+	local canvasX = results.CanvasPosition.X
+
+	local viewportTop = canvasY + resultsPadding.PaddingTop.Offset
+	local viewportBottom = canvasY + results.AbsoluteSize.Y
+	- resultsPadding.PaddingBottom.Offset
+
+	local viewportLeft = canvasX + resultsPadding.PaddingLeft.Offset
+	local viewportRight = canvasX + results.AbsoluteSize.X
+	- resultsPadding.PaddingRight.Offset
+
+	local overscanY = math.max(
+		H.resultsGrid.CellSize.Y.Offset * 0.75,
+		results.AbsoluteSize.Y * 0.08
+	)
+
+	local overscanX = H.resultsGrid.CellSize.X.Offset * 0.5
 	local resultsActive = results.Visible
+
 	for _, tile in ipairs(results:GetChildren()) do
-		if tile:IsA("GuiButton") then
-			local content = tile:FindFirstChild("TileContent")
-			if content then
-				local tileTop = tile.AbsolutePosition.Y
-				local tileBottom = tileTop + tile.AbsoluteSize.Y
-				local inRange = resultsActive and tile.Visible
-					and tileBottom >= viewportTop - overscan and tileTop <= viewportBottom + overscan
-				content.Visible = inRange
-				tile.BackgroundTransparency = inRange and 0 or 1
-				tile.Active = inRange
-				local stroke = tile:FindFirstChildOfClass("UIStroke")
-				if stroke then
-					local hovered = tile:GetAttribute("CatalogHovered") == true
-					stroke.Transparency = inRange and (hovered and 0.05 or 0.45) or 1
-					stroke.Color = hovered and C.accent or C.line
-				end
-			end
+		if not tile:IsA("GuiButton") then
+			continue
+		end
+
+		local content = tile:FindFirstChild("TileContent")
+		if not content then
+			continue
+		end
+
+		-- Convert screen position into scrolling-canvas coordinates.
+		local tilePosition = tile.AbsolutePosition - results.AbsolutePosition
+		local tileLeft = tilePosition.X + canvasX
+		local tileTop = tilePosition.Y + canvasY
+		local tileRight = tileLeft + tile.AbsoluteSize.X
+		local tileBottom = tileTop + tile.AbsoluteSize.Y
+
+		local inRange = resultsActive and tile.Visible
+			and tileRight >= viewportLeft - overscanX
+			and tileLeft <= viewportRight + overscanX
+			and tileBottom >= viewportTop - overscanY
+			and tileTop <= viewportBottom + overscanY
+
+		-- Hide the entire contents of off-screen cells.
+		-- Keeping the outer tile alive preserves the grid layout.
+		content.Visible = inRange
+		tile.BackgroundTransparency = inRange and 0 or 1
+		tile.Active = inRange
+		tile.Selectable = inRange
+
+		local stroke = tile:FindFirstChildOfClass("UIStroke")
+		if stroke then
+			local hovered = tile:GetAttribute("CatalogHovered") == true
+			stroke.Transparency = inRange
+				and (hovered and 0.05 or 0.45)
+				or 1
+			stroke.Color = hovered and C.accent or C.line
 		end
 	end
 end
+results.ChildAdded:Connect(function(child)
+	if child:IsA("GuiButton") then
+		H.scheduleResultsTileVisibility()
+	end
+end)
 H.scheduleResultsTileVisibility = function()
 	if H.resultsCullQueued then return end
 	H.resultsCullQueued = true
@@ -2039,9 +2080,6 @@ local busyToken = 0
 local activeRequestId
 local lastName = ""
 local updateBodyScaleInputs
-local function setStatus(message)
-	if H.status then H.status.Text = message end
-end
 
 local function beginBusy(message)
 	if busy then return nil end
@@ -2049,7 +2087,6 @@ local function beginBusy(message)
 	busyToken += 1
 	local requestId = busyToken
 	activeRequestId = requestId
-	setStatus(message)
 	task.delay(35, function()
 		if activeRequestId == requestId and busy then
 			busy = false
@@ -2057,7 +2094,6 @@ local function beginBusy(message)
 
 			H.setPublicSearchLocked(false)
 
-			setStatus("Timed out. You can try again.")
 		end
 	end)
 	return requestId
@@ -2070,8 +2106,6 @@ local function failBusy(requestId, message)
 		activeRequestId = nil
 
 		H.setPublicSearchLocked(false)
-
-		setStatus(message)
 	end
 end
 
@@ -2610,7 +2644,6 @@ local function wearItem(data)
 
 	if data.background == true or data.typeName == "AvatarBackground" then
 		setViewportBackground(data.id)
-		setStatus("Previewing background: " .. tostring(data.name or data.id))
 		return
 	end
 	local requestId = beginBusy("Applying " .. tostring(data.name or data.id) .. "...")
@@ -2626,7 +2659,6 @@ local function wearItem(data)
 			if typeName == "AvatarBackground" then
 				failBusy(requestId, "Avatar backgrounds can only be previewed")
 				setViewportBackground(data.id)
-				setStatus("Previewing background: " .. tostring(data.name or data.id))
 				return
 			end
 
@@ -2919,12 +2951,6 @@ local function applyFilter()
 		local prefix = publicInventoryRequestId
 			and "Loading public inventory"
 			or "Public inventory"
-
-		setStatus(prefix .. " for " .. publicInventoryUsername
-			.. " · " .. tostring(#publicInventoryItems)
-			.. " matching items · "
-			.. tostring(publicInventoryReceivedCount) .. " received")
-
 		return
 	end
 	local localItems = TABS[curTab].kind ~= "catalog"
@@ -3159,7 +3185,6 @@ local function addTile(data, kind)
 		if consumeTileLongPress() then return end
 		if data.background then
 			setViewportBackground(data.id)
-			setStatus("Previewing background: " .. data.name)
 		elseif isEmotePreviewItem(data) then toggleEmotePreview(data)
 		else wearItem(data) end
 	end)
@@ -3480,8 +3505,6 @@ refreshActiveInventoryView = function()
 	resultScrollPositions[key] = restoreY
 	local activeSource = sourceId
 	beginInventoryTileView(filtered, tabIndex, chipIndex, restoreY, activeSource)
-	setStatus("Inventory loading in background · " .. tostring(#inventoryLoadedById)
-		.. " items cached · " .. tostring(#filtered) .. " match this category")
 end
 
 local inventoryOk = false
@@ -4046,7 +4069,6 @@ do
 
 	local function openSaveReview()
 		if #currentEquippedItems == 0 then
-			setStatus("There are no currently worn items to review.")
 			return
 		end
 		closeSaveReview()
@@ -4187,9 +4209,6 @@ do
 		if not promptOk then
 			if pendingSaveDescription then pcall(function() pendingSaveDescription:Destroy() end) end
 			pendingSaveDescription = nil
-			setStatus("Roblox could not open the save prompt: " .. tostring(promptError))
-		else
-			setStatus(kind == "avatar" and "Confirm the Roblox prompt to save your avatar." or "Confirm the Roblox prompt to create your outfit.")
 		end
 	end
 
@@ -4229,23 +4248,10 @@ do
 	AvatarEditorService.PromptSaveAvatarCompleted:Connect(function(result)
 		if pendingSaveDescription then pcall(function() pendingSaveDescription:Destroy() end) end
 		pendingSaveDescription = nil
-		setStatus(result == Enum.AvatarPromptResult.Success and "Avatar saved to Roblox successfully." or "Avatar save was cancelled or failed.")
 	end)
 	AvatarEditorService.PromptCreateOutfitCompleted:Connect(function(result, failureType)
 		if pendingSaveDescription then pcall(function() pendingSaveDescription:Destroy() end) end
 		pendingSaveDescription = nil
-		if result == Enum.AvatarPromptResult.Success then
-			setStatus("Outfit saved to Roblox successfully.")
-		elseif result == Enum.AvatarPromptResult.PermissionDenied then
-			setStatus("Outfit save was cancelled. Confirm the Roblox outfit prompt to continue.")
-		elseif failureType == Enum.CreateOutfitFailure.OutfitLimitReached then
-			setStatus("Roblox could not save this outfit: your saved-outfit limit has been reached.")
-		elseif failureType == Enum.CreateOutfitFailure.InvalidName then
-			setStatus("Roblox rejected the outfit name. Try a different name in the Roblox prompt.")
-		else
-			warn("[CatalogUI] PromptCreateOutfit failed:", result, failureType)
-			setStatus("Roblox could not create the outfit: " .. tostring(failureType or result) .. ". Try again in the published experience.")
-		end
 	end)
 
 	local bulkPurchaseCooldown = false
@@ -4319,26 +4325,18 @@ do
 	H.purchaseAllBtn.Activated:Connect(function()
 		if bulkPurchaseCooldown then return end
 		if #currentEquippedItems == 0 then
-			setStatus("There are no currently worn items to purchase.")
 			return
 		end
 
 		local lines, errorText, truncated = H.getBulkPurchaseLines()
 		if not lines then
-			setStatus(errorText)
 			return
 		end
 		if #lines == 0 then
-			setStatus("No valid currently worn items were found.")
 			return
 		end
 
 		H.beginBulkPurchaseCooldown()
-		if truncated then
-			setStatus("Opening purchase for the first 20 items.")
-		else
-			setStatus("Opening purchase for " .. tostring(#lines) .. " items.")
-		end
 		bulkPurchaseEvent:FireServer(lines)
 	end)
 end
@@ -4384,19 +4382,16 @@ H.load = function()
 	pages = nil
 	loadingMore = false
 	clearTiles()
-	setStatus("Loading...")
 	if tab.kind == "catalog" then table.clear(catalogLoadedById) end
 	if chipData and chipData.special == "inventorybundles" then
 		results.Visible = true
 		bodyColorPane.Visible, bodyScalePane.Visible = false, false
-		setStatus("Roblox's supported inventory API lists owned assets by AvatarAssetType, not owned bundle records. Check Outfits for saved looks or catalog bundle categories for bundles.")
 		return
 	end
 	if chipData and (chipData.special == "bodycolors" or chipData.special == "bodyscaling") then
 		results.Visible = false
 		bodyColorPane.Visible = chipData.special == "bodycolors"
 		bodyScalePane.Visible = chipData.special == "bodyscaling"
-		setStatus(chipData.special == "bodycolors" and "Choose a body color above." or "Adjust the avatar scale values, then apply them.")
 		return
 	end
 	bodyColorPane.Visible, bodyScalePane.Visible = false, false
@@ -4406,26 +4401,20 @@ H.load = function()
 		local granted = ensureInventory()
 		if myId ~= sourceId then return end
 		if not granted then
-			setStatus("Inventory access wasn't allowed. Open this tab again to retry.")
 			return
 		end
 		if inventoryCacheReady then
 			local filtered = getInventoryItemsForChip(chipData)
 			beginInventoryTileView(filtered, tabIndex, chipIndex, restoreY, myId)
-			setStatus("Showing first " .. tostring(math.min(#filtered, INVENTORY_INITIAL_RENDER_COUNT)) .. " of " .. tostring(#filtered)
-				.. " cached items · scroll to load more · newest acquired first")
 			return
 		end
 		if inventoryCacheLoading then
 
 			local filtered = getInventoryItemsForChip(chipData)
 			beginInventoryTileView(filtered, tabIndex, chipIndex, restoreY, myId)
-			setStatus("Inventory loading in background · " .. tostring(#inventoryLoadedById)
-				.. " cached items · " .. tostring(#filtered) .. " in this category so far")
 			return
 		end
 		if not chipData or #chipData.assets == 0 then
-			setStatus("Nothing to show here")
 			return
 		end
 
@@ -4433,7 +4422,6 @@ H.load = function()
 		inventoryCacheError = nil
 		local alreadyCached = getInventoryItemsForChip(chipData)
 		beginInventoryTileView(alreadyCached, tabIndex, chipIndex, restoreY, myId)
-		setStatus("Caching your inventory in the background · " .. tostring(#inventoryLoadedById) .. " items already cached...")
 		task.spawn(function()
 
 			local failedTypes = {}
@@ -4493,8 +4481,6 @@ H.load = function()
 							if addedThisPage > 0 then queueInventoryViewRefresh() end
 							if TABS[curTab] and TABS[curTab].kind == "inventory" and os.clock() - lastInventoryStatus >= 0.45 then
 								lastInventoryStatus = os.clock()
-								setStatus("Caching " .. H.prettyType(assetType.Name) .. " · page " .. tostring(pageCount)
-									.. " · " .. tostring(#inventoryLoadedById) .. " unique items cached")
 							end
 
 							local finishedOk, isFinished = pcall(function() return inventoryPages.IsFinished end)
@@ -4537,10 +4523,6 @@ H.load = function()
 					local job = pendingTypes[nextTypeIndex]
 					if not job then break end
 					local assetType = job.assetType
-					if TABS[curTab] and TABS[curTab].kind == "inventory" then
-						setStatus("Caching inventory · type " .. tostring(job.index) .. "/" .. tostring(totalTypes)
-							.. " · " .. H.prettyType(assetType.Name) .. " · " .. tostring(#inventoryLoadedById) .. " items found")
-					end
 					local typeOk, typeResult = fetchOneInventoryType(assetType)
 					if typeOk then
 						inventoryTypesReady[assetType.Value] = true
@@ -4574,12 +4556,6 @@ H.load = function()
 				if not (activeChip and activeChip.special == "inventorybundles") then
 					local filtered = getInventoryItemsForChip(activeChip)
 					beginInventoryTileView(filtered, activeTabIndex, activeChipIndex, activeY, activeSource)
-					if inventoryCacheReady then
-						setStatus("Cached " .. tostring(#inventoryLoadedById) .. " items across " .. tostring(fetchedTypes) .. "/" .. tostring(totalTypes) .. " types · first " .. tostring(math.min(#filtered, INVENTORY_INITIAL_RENDER_COUNT)) .. " shown · scroll to load more")
-					else
-						warn("[CatalogUI] Inventory cache is partial:", inventoryCacheError)
-						setStatus("Loaded " .. tostring(#inventoryLoadedById) .. " items · some asset types failed · scroll to load more")
-					end
 				end
 			end
 		end)
@@ -4593,23 +4569,17 @@ H.load = function()
 		local granted = ensureInventory()
 		if myId ~= sourceId then return end
 		if not granted then
-			setStatus("Inventory access wasn't allowed. Open this tab again to retry.")
 			return
 		end
 		ok, response = pcall(getOutfits)
 	end
 	if myId ~= sourceId then return end
 	if not ok or not response then
-		warn("[CatalogUI] Load failed:", response)
-		setStatus("Couldn't load (see Output)")
 		return
 	end
 
 	pages = response
 	local count = addCurrentPage(tab.kind)
-	if count == 0 then setStatus("No results")
-	elseif chipData and chipData.label == "Backgrounds" then setStatus("Tap a background to preview it behind your avatar")
-	else setStatus(tab.kind == "outfits" and "Your saved outfits · newest Roblox results first · tap to wear, right-click for details" or "Tap an item to wear it") end
 	restoreResultsScroll(tabIndex, chipIndex, restoreY, myId)
 	checkFill()
 end
@@ -4647,7 +4617,6 @@ local function rebuildChips()
 				results.Visible = false
 				bodyColorPane.Visible = true
 				bodyScalePane.Visible = false
-				setStatus("Choose a body color above.")
 			elseif selected and selected.special == "bodyscaling" then
 				pages = nil
 				sourceId += 1
@@ -4655,7 +4624,6 @@ local function rebuildChips()
 				results.Visible = false
 				bodyColorPane.Visible = false
 				bodyScalePane.Visible = true
-				setStatus("Adjust the avatar scale values, then apply them.")
 			else
 				bodyColorPane.Visible, bodyScalePane.Visible = false, false
 				results.Visible = true
@@ -4794,8 +4762,6 @@ searchBox:GetPropertyChangedSignal("Text"):Connect(function()
 		else
 			status ..= " · newest acquired first"
 		end
-
-		setStatus(status)
 		return
 	end
 
@@ -4823,7 +4789,6 @@ end
 local function updatePriceFilter()
 	local nextMin, nextMax = parsePrice(minBox), parsePrice(maxBox)
 	if nextMin and nextMax and nextMin > nextMax then
-		setStatus("Minimum price cannot exceed maximum price")
 		minBox.Text = state.min and tostring(state.min) or ""
 		maxBox.Text = state.max and tostring(state.max) or ""
 		return
@@ -4850,7 +4815,6 @@ H.inspectPublicAvatar = function()
 
 	if #username < 3 or #username > 20
 		or not username:match("^[%w_]+$") then
-		setStatus("Invalid username")
 		return
 	end
 
@@ -4881,7 +4845,6 @@ H.inspectPublicOutfits = function()
 
 	if #username < 3 or #username > 20
 		or not username:match("^[%w_]+$") then
-		setStatus("Invalid username")
 		return
 	end
 
@@ -5408,7 +5371,7 @@ H.enrichBundleContents = function(generation)
 				else
 					unavailableCount += 1
 				end
-				updateBundleContentRow(item)
+				H.updateBundleContentRow(item)
 			end
 			finishedWorkers += 1
 			finishIfReady()
@@ -5850,7 +5813,6 @@ end
 H.previewCatalogLink = function()
 	local id, bundleFlag = H.parseCatalogLink(urlBox.Text)
 	if not id or id <= 0 or id >= 1e13 then
-		setStatus("Enter a valid Roblox catalog/bundle URL or numeric item ID.")
 		return
 	end
 	H.openItemDetails({ id = id, name = "Catalog item " .. tostring(id), bundle = bundleFlag == true, auto = bundleFlag == nil, typeName = nil })
@@ -5862,7 +5824,6 @@ end)
 H.onUnequipRequested = function(assetId, typeName)
 	local numericId = tonumber(assetId)
 	if not numericId or numericId <= 0 or numericId % 1 ~= 0 or numericId > 9007199254740991 then
-		setStatus("Cannot remove this item: invalid asset ID.")
 		return
 	end
 	local requestId = beginBusy("Removing " .. H.prettyType(typeName) .. "...")
@@ -5882,7 +5843,6 @@ detailWearBtn.Activated:Connect(function()
 	if not data then return end
 	if data.background then
 		setViewportBackground(data.id)
-		setStatus("Previewing background: " .. tostring(data.name))
 		detailOverlay.Visible = false
 	elseif isEmotePreviewItem(data) then
 		detailOverlay.Visible = false
@@ -5901,7 +5861,6 @@ detailBuyBtn.Activated:Connect(function()
 	end)
 	if not ok then
 		warn("[CatalogUI] Purchase prompt failed:", err)
-		setStatus("Roblox could not open the purchase prompt for this item.")
 	end
 end)
 resetBtn.Activated:Connect(function()
@@ -6008,10 +5967,6 @@ local function appendPublicInventoryPage(requestId, detail)
 		H.updateResultsCanvas()
 		H.scheduleResultsTileVisibility()
 	end
-
-	setStatus("Loading public inventory for " .. publicInventoryUsername
-		.. " · " .. tostring(publicInventoryReceivedCount)
-		.. " items received · scroll to load more")
 end
 remote.OnClientEvent:Connect(function(kind, requestId, code, detail)
 	if kind == "Progress" then
@@ -6063,9 +6018,6 @@ remote.OnClientEvent:Connect(function(kind, requestId, code, detail)
 				outfitCount += 1
 			end
 		end
-		local suffix = detail.partial and " · partial result" or ""
-		setStatus(outfitCount > 0 and ("Public saved outfits for " .. tostring(detail.username or "player") .. " · " .. tostring(outfitCount) .. " outfits" .. suffix)
-			or ("No public saved outfits were returned for " .. tostring(detail.username or "player")))
 	elseif code == "publicInventory" and type(detail) == "table" then
 		if publicInventoryRequestId == requestId then
 
@@ -6140,10 +6092,6 @@ remote.OnClientEvent:Connect(function(kind, requestId, code, detail)
 		local prefix = detail.inventoryPrivate
 			and "Inventory is private; "
 			or "Public inventory unavailable; "
-
-		setStatus(prefix .. "showing currently worn avatar items for "
-			.. tostring(detail.username or "player")
-			.. " · " .. tostring(itemCount) .. " items")
 	elseif type(detail) == "table" and type(detail.equippedIds) == "table" then
 		local serverCount = #detail.equippedIds
 		if type(detail.equippedItems) == "table" then serverCount = math.max(serverCount, #detail.equippedItems) end
@@ -6258,7 +6206,6 @@ remote.OnClientEvent:Connect(function(kind, requestId, code, detail)
 			message = "Couldn't apply: " .. string.sub(detailMessage, 1, 90)
 		end
 	end
-	setStatus(message)
 	if type(detail) == "string"
 		and detail:match("^Rate limited, waiting") then
 
