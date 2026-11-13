@@ -1657,13 +1657,12 @@ local myOutfitsBtn = H.mkButton(
 )
 H.setLayout(myOutfitsBtn, "Position", UDim2.fromOffset(646, 0))
 
--- Public search controls share one loading state.
 H.publicSearchLocked = false
 
+-- Only these two buttons are locked during public searches.
 H.publicSearchButtons = {
 	inspectPublicAvatarBtn,
 	publicOutfitsBtn,
-	myOutfitsBtn,
 }
 
 H.setPublicSearchLocked = function(locked)
@@ -1677,6 +1676,57 @@ H.setPublicSearchLocked = function(locked)
 		button.AutoButtonColor = not H.publicSearchLocked
 		button.TextColor3 = H.publicSearchLocked and C.sub or C.text
 	end
+
+	-- My outfits is always available.
+	myOutfitsBtn.Active = true
+	myOutfitsBtn.Selectable = true
+	myOutfitsBtn.AutoButtonColor = true
+	myOutfitsBtn.TextColor3 = C.text
+end
+
+-- Client-side rate-limit countdown.
+H.publicRateLimitToken = 0
+
+H.startPublicSearchCooldown = function(seconds)
+	H.publicRateLimitToken += 1
+
+	local token = H.publicRateLimitToken
+
+	H.publicRateLimitRemaining = math.clamp(
+		math.ceil(tonumber(seconds) or 60),
+		1,
+		300
+	)
+
+	H.setPublicSearchLocked(true)
+
+	task.spawn(function()
+		while H.publicRateLimitRemaining > 0
+			and token == H.publicRateLimitToken do
+
+			if H.status then
+				H.status.Text = "Rate limited, waiting ("
+					.. tostring(H.publicRateLimitRemaining)
+					.. " seconds)."
+			end
+
+			task.wait(1)
+
+			if token ~= H.publicRateLimitToken then
+				return
+			end
+
+			H.publicRateLimitRemaining -= 1
+		end
+
+		if token == H.publicRateLimitToken then
+			H.setPublicSearchLocked(false)
+
+			if H.status then
+				H.status.Text = "You can search again."
+			end
+		end
+	end)
 end
 
 local chipHolder = H.new("ScrollingFrame", {
@@ -2866,7 +2916,6 @@ local function applyFilter()
 		local restoreY = tonumber(results.CanvasPosition.Y) or 0
 
 		rebuildPublicInventoryView(restoreY)
-
 		local prefix = publicInventoryRequestId
 			and "Loading public inventory"
 			or "Public inventory"
@@ -4663,7 +4712,7 @@ local function setTab(index)
 	if isCatalog then
 		searchBox.PlaceholderText = tab.name == "Body" and "Search body items" or (isLimited and "Search limited items" or "Search the catalog")
 	elseif tab.kind == "inventory" then searchBox.PlaceholderText = "Filter your items"
-	else searchBox.PlaceholderText = "Filter your outfits" end
+	else searchBox.PlaceholderText = "Filter outfits or inventory" end
 	chipHolder.Visible = tab.chips ~= nil
 	local selected = tab.chips and tab.chips[chipIdx[index]] or nil
 	local showColors = selected and selected.special == "bodycolors"
@@ -4803,8 +4852,6 @@ inspectPublicAvatarBtn.Activated:Connect(H.inspectPublicAvatar)
 publicOutfitsBtn.Activated:Connect(H.inspectPublicOutfits)
 
 myOutfitsBtn.Activated:Connect(function()
-	if H.publicSearchLocked then return end
-
 	publicAvatarUserBox.Text = ""
 	state.keyword = searchBox.Text
 
@@ -5835,6 +5882,8 @@ snapshotState.request = function(attempt)
 end
 local function beginPublicInventoryStream(requestId, username)
 	publicInventoryStreamRequestId = requestId
+	H.publicInventoryTileViewStarted = false
+
 	publicInventoryViewActive = true
 	publicInventoryUsername = tostring(username or "player")
 	publicInventoryReceivedCount = 0
@@ -5886,7 +5935,12 @@ local function appendPublicInventoryPage(requestId, detail)
 		end
 	end
 
-	if firstPage then
+	-- Wait until 32 matching items are available before creating the view.
+	if not H.publicInventoryTileViewStarted
+		and #publicInventoryItems >= INVENTORY_INITIAL_RENDER_COUNT then
+
+		H.publicInventoryTileViewStarted = true
+
 		beginInventoryTileView(
 			publicInventoryItems,
 			curTab,
@@ -5894,7 +5948,8 @@ local function appendPublicInventoryPage(requestId, detail)
 			0,
 			sourceId
 		)
-	else
+
+	elseif H.publicInventoryTileViewStarted then
 		H.inventoryCanvasItemCount = #publicInventoryItems
 		H.updateResultsCanvas()
 		H.scheduleResultsTileVisibility()
@@ -5917,9 +5972,20 @@ remote.OnClientEvent:Connect(function(kind, requestId, code, detail)
 	end
 
 	if kind ~= "Result" or requestId ~= activeRequestId then return end
+
 	busy = false
 	activeRequestId = nil
-	H.setPublicSearchLocked(false)
+
+	local rateLimitResponse =
+		(type(detail) == "string"
+			and detail:match("^Rate limited, waiting"))
+		or (type(detail) == "table"
+			and type(detail.statusMessage) == "string"
+			and detail.statusMessage:match("^Rate limited, waiting"))
+
+	if not rateLimitResponse then
+		H.setPublicSearchLocked(false)
+	end
 	if code == "publicOutfits" and type(detail) == "table" then
 		publicInventoryViewActive = false
 		publicInventoryRequestId = nil
@@ -5948,8 +6014,13 @@ remote.OnClientEvent:Connect(function(kind, requestId, code, detail)
 			or ("No public saved outfits were returned for " .. tostring(detail.username or "player")))
 	elseif code == "publicInventory" and type(detail) == "table" then
 		if publicInventoryRequestId == requestId then
+
 			if publicInventoryStreamRequestId ~= requestId then
 				beginPublicInventoryStream(requestId, detail.username)
+			end
+
+			if not H.publicInventoryTileViewStarted then
+				H.publicInventoryTileViewStarted = true
 
 				beginInventoryTileView(
 					publicInventoryItems,
@@ -5958,6 +6029,10 @@ remote.OnClientEvent:Connect(function(kind, requestId, code, detail)
 					0,
 					sourceId
 				)
+			else
+				H.inventoryCanvasItemCount = #publicInventoryItems
+				H.updateResultsCanvas()
+				H.scheduleResultsTileVisibility()
 			end
 
 			publicInventoryReceivedCount =
@@ -6130,6 +6205,21 @@ remote.OnClientEvent:Connect(function(kind, requestId, code, detail)
 		end
 	end
 	setStatus(message)
+	if type(detail) == "string"
+		and detail:match("^Rate limited, waiting") then
+
+		H.startPublicSearchCooldown(
+			tonumber(detail:match("%((%d+) seconds?%)")) or 60
+		)
+
+	elseif type(detail) == "table"
+		and type(detail.statusMessage) == "string"
+		and detail.statusMessage:match("^Rate limited, waiting") then
+
+		H.startPublicSearchCooldown(
+			tonumber(detail.statusMessage:match("%((%d+) seconds?%)")) or 60
+		)
+	end
 	if code ~= "error" and code ~= "busy" and code ~= "nouser" then
 		scheduleRebuild(0.6)
 		task.delay(0.75, function()
