@@ -1315,7 +1315,13 @@ local function inspectPublicOutfits(plr, name)
 	if type(outfits) ~= "table" then
 		return "error", tostring(reason or state or "Public outfits could not be loaded. The inventory may be private.")
 	end
-	return "publicOutfits", { userId = userId, username = canonicalName, outfits = outfits, partial = state == "partial" }
+	return "publicOutfits", {
+		userId = userId,
+		username = canonicalName,
+		outfits = outfits,
+		partial = state == "partial",
+		statusMessage = reason,
+	}
 end
 
 local function inspectPublicAvatar(plr, name, requestInventory, requestId)
