@@ -4745,11 +4745,65 @@ searchBox.FocusLost:Connect(function()
 		end
 	end
 end)
+
 searchBox:GetPropertyChangedSignal("Text"):Connect(function()
-	if TABS[curTab].kind ~= "catalog" and not (TABS[curTab].kind == "inventory" and (inventoryCacheReady or inventoryCacheLoading)) then
+	local tab = TABS[curTab]
+	if not tab then return end
+
+	-- Keep public inventory filtering on its existing path.
+	if publicInventoryViewActive then
+		applyFilter()
+		return
+	end
+
+	-- Rebuild private inventory immediately when the search changes.
+	if tab.kind == "inventory" then
+		local chipIndex = chipIdx[curTab]
+		local chipData = tab.chips and tab.chips[chipIndex]
+
+		if chipData and chipData.special then
+			return
+		end
+
+		state.keyword = searchBox.Text
+
+		local key = getResultScrollKey(curTab, chipIndex)
+
+		-- Always start filtered results at the top.
+		resultScrollPositions[key] = 0
+
+		-- Filter the cached inventory, not the Roblox API.
+		local filtered = getInventoryItemsForChip(chipData)
+
+		beginInventoryTileView(
+			filtered,
+			curTab,
+			chipIndex,
+			0,
+			sourceId
+		)
+
+		local status = "Showing first "
+			.. tostring(math.min(#filtered, INVENTORY_INITIAL_RENDER_COUNT))
+			.. " of "
+			.. tostring(#filtered)
+			.. " matching items"
+
+		if inventoryCacheLoading then
+			status ..= " · inventory still loading"
+		else
+			status ..= " · newest acquired first"
+		end
+
+		setStatus(status)
+		return
+	end
+
+	if tab.kind ~= "catalog" then
 		applyFilter()
 	end
 end)
+
 sortBtn.Activated:Connect(function() sortMenu.Visible = not sortMenu.Visible end)
 saleBtn.Activated:Connect(function()
 	state.sale = state.sale % #SALES + 1
