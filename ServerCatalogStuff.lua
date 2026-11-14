@@ -1000,7 +1000,10 @@ local function getPublicInventory(userId, onPage)
 
 						local normalizedItem = {
 							id = assetId,
-							name = tostring(rawName or ("Item " .. assetId)),
+							name = type(rawName) == "string"
+								and rawName ~= ""
+								and rawName
+								or nil,
 							typeName = ASSET_TYPE_NAMES[assetTypeId] or "Item",
 						}
 
