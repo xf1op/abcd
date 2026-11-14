@@ -394,11 +394,11 @@ local chipIdx = {}
 for index = 1, #TABS do chipIdx[index] = 1 end
 
 local C = {
-	bg = Color3.fromRGB(14, 15, 18), panel = Color3.fromRGB(27, 29, 34),
-	field = Color3.fromRGB(37, 40, 47), card = Color3.fromRGB(42, 45, 53),
-	line = Color3.fromRGB(58, 62, 71), text = Color3.fromRGB(235, 237, 240),
-	sub = Color3.fromRGB(148, 154, 166), accent = Color3.fromRGB(0, 162, 255),
-	success = Color3.fromRGB(42, 150, 82), danger = Color3.fromRGB(180, 52, 52),
+	bg = Color3.fromRGB(0, 0, 0), panel = Color3.fromRGB(20, 20, 20),
+	field = Color3.fromRGB(30, 30, 30), card = Color3.fromRGB(40, 40, 40),
+	line = Color3.fromRGB(80, 80, 80), text = Color3.fromRGB(255, 255, 255),
+	sub = Color3.fromRGB(160, 160, 160), accent = Color3.fromRGB(50, 100, 200),
+	success = Color3.fromRGB(50, 200, 50), danger = Color3.fromRGB(200, 50, 50),
 }
 local F, FM, FB = Enum.Font.BuilderSansBold, Enum.Font.BuilderSansBold, Enum.Font.BuilderSansBold
 local textObjects = {}
@@ -647,23 +647,27 @@ local gui = H.new("ScreenGui", {
 }, player:WaitForChild("PlayerGui"))
 local root = H.new("Frame", {
 	Name = "ResponsiveRoot", AnchorPoint = Vector2.new(0.5, 0.5),
-	Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1,
+	Position = UDim2.fromScale(0.5, 0.485), Size = UDim2.fromScale(1.05, 1.05), BackgroundTransparency = 1,
 }, gui)
 designSizes[root] = REFERENCE_CANVAS_SIZE
 H.new("UIAspectRatioConstraint", {
 	AspectRatio = 16 / 9, AspectType = Enum.AspectType.FitWithinMaxSize,
-	DominantAxis = Enum.DominantAxis.Width,
+	DominantAxis = Enum.DominantAxis.Height,
 }, root)
 
 local toggleBtn = H.new("TextButton", {
 	Name = "CatalogToggleButton", AnchorPoint = Vector2.new(0.5, 1),
-	Position = UDim2.fromScale(0.5, 0.985), Size = UDim2.fromScale(0.12, 0.045),
+	Position = UDim2.fromScale(0.5, 0.98), Size = UDim2.fromScale(0.12, 0.045),
 	BackgroundColor3 = C.accent, Text = "Open Catalog", TextColor3 = C.text,
-	Font = FB, TextSize = 20, ZIndex = 5,
+	Font = FB, TextSize = 24, ZIndex = 5,
 }, root)
 H.applyTouchScale(toggleBtn, 1.06)
-H.round(toggleBtn, 24)
-
+H.round(toggleBtn, 12)
+local UIStroke = Instance.new("UIStroke")
+UIStroke.Thickness = 2
+UIStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+UIStroke.Transparency = 0.5
+UIStroke.Parent = toggleBtn
 RunService.Heartbeat:Wait()
 local function updateTextScale()
 	local size = root.AbsoluteSize
@@ -1087,7 +1091,6 @@ local function toggleEmotePreview(data)
 	if not data or not tonumber(data.id) then return end
 	if H.activeEmote and H.activeEmote.id == data.id then
 		stopEmotePreview()
-		if H.status then H.status.Text = "Animation stopped" end
 		return
 	end
 	stopEmotePreview()
@@ -1098,12 +1101,10 @@ local function toggleEmotePreview(data)
 		local character = player.Character
 		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 		if not humanoid then
-			if H.status then H.status.Text = "Character is not ready for emote playback" end
 			return
 		end
 		local restoreState, animationClipId, _, previewError = startCatalogEmotePreview(humanoid, tonumber(data.id))
 		if not restoreState then
-			if H.status then H.status.Text = tostring(previewError or "Roblox could not load this emote") end
 			return
 		end
 
@@ -1114,16 +1115,12 @@ local function toggleEmotePreview(data)
 			active.viewportTrack, active.viewportAnimation = playAnimationOnHumanoid(previewHumanoid, animationClipId)
 		end
 		H.activeEmote = active
-		if H.status then
-			H.status.Text = "Playing " .. tostring(data.name) .. " on your avatar · click again to stop"
-		end
 		return
 	end
 
 	local character = player.Character
 	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 	if not humanoid then
-		if H.status then H.status.Text = "Character is not ready for an animation preview" end
 		return
 	end
 	local previewState = { id = data.id }
@@ -1137,10 +1134,8 @@ local function toggleEmotePreview(data)
 	if not previewState.playerTrack and not previewState.viewportTrack then
 		H.activeEmote = nil
 		if H.previewIdleTrack then pcall(function() H.previewIdleTrack:Play(0.2) end) end
-		if H.status then H.status.Text = "Roblox could not load this animation asset" end
 		return
 	end
-	if H.status then H.status.Text = "Playing " .. tostring(data.name) .. " · click again to stop" end
 end
 
 local function applyOrbitDelta(delta)
@@ -1312,7 +1307,6 @@ local function rebuildViewport()
 	local descOk, description = pcall(function() return realHumanoid:GetAppliedDescription() end)
 	if not descOk or not description then
 		warn("[CatalogUI] Could not read avatar description for viewport:", description)
-		if H.status then H.status.Text = "Could not read avatar appearance for preview" end
 		return
 	end
 
@@ -1334,7 +1328,6 @@ local function rebuildViewport()
 	end
 	if not created or not clone then
 		warn("[CatalogUI] Could not create " .. tostring(targetRig) .. " viewport rig:", clone)
-		if H.status then H.status.Text = "Roblox could not build the " .. (targetRig == Enum.HumanoidRigType.R6 and "R6" or "R15") .. " preview" end
 		return
 	end
 
@@ -1454,7 +1447,6 @@ RunService.RenderStepped:Connect(function(deltaTime)
 		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 		if not humanoid then
 			stopEmotePreview()
-			if H.status then H.status.Text = "Animation stopped because the character is no longer available" end
 		end
 	end
 	if autoRotate and not dragging and main.Visible and previewModel then
@@ -1484,7 +1476,6 @@ H.rigToggleBtn.Activated:Connect(function()
 	local character = player.Character
 	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 	if not humanoid then
-		if H.status then H.status.Text = "Your character is not ready yet." end
 		return
 	end
 
@@ -1492,9 +1483,6 @@ H.rigToggleBtn.Activated:Connect(function()
 	rigSwitchBusy = true
 	H.rigToggleBtn.Active = false
 	H.rigToggleBtn.Text = "Switching..."
-	if H.status then
-		H.status.Text = "Changing your actual character to " .. targetRig .. "..."
-	end
 
 	task.spawn(function()
 		local invokeOk, success, rigName, message = pcall(function()
@@ -1506,12 +1494,10 @@ H.rigToggleBtn.Activated:Connect(function()
 		if not invokeOk then
 			warn("[CatalogUI] Character rig switch request failed:", success)
 			updateRigToggleLabel()
-			if H.status then H.status.Text = "Rig switch failed. Check that CatalogRigSwitch is installed in ServerScriptService." end
 			return
 		end
 		if not success then
 			updateRigToggleLabel()
-			if H.status then H.status.Text = tostring(message or "Roblox could not change your character rig.") end
 			return
 		end
 
@@ -1530,7 +1516,6 @@ H.rigToggleBtn.Activated:Connect(function()
 			updateRigToggleLabel()
 		end
 		yaw, pitch, zoom = 0, 0, 1
-		if H.status then H.status.Text = tostring(message or ("Your character is now " .. tostring(rigName) .. ".")) end
 		scheduleRebuild(0.15)
 	end)
 end)
@@ -1626,11 +1611,8 @@ local linkRow = H.new("Frame", {
 	Size = UDim2.new(1, -28, 0, 38),
 }, center)
 
-local linkLabel = H.label(linkRow, "Item ID/Link", 0, 0, 105, 38, 11, C.sub, FB)
-linkLabel.TextYAlignment = Enum.TextYAlignment.Center
-
-local urlBox = H.mkBox(linkRow, "Item ID or URL", 850, 38)
-H.setLayout(urlBox, "Position", UDim2.fromOffset(112, 0))
+local urlBox = H.mkBox(linkRow, "Asset ID or URL", 600, 38)
+H.setLayout(urlBox, "Position", UDim2.fromOffset(0, 0))
 
 local publicAvatarRow = H.new("Frame", {
 	Name = "PublicAvatarSearchRow",
@@ -1659,7 +1641,6 @@ H.setLayout(myOutfitsBtn, "Position", UDim2.fromOffset(646, 0))
 
 H.publicSearchLocked = false
 
--- Only these two buttons are locked during public searches.
 H.publicSearchButtons = {
 	inspectPublicAvatarBtn,
 	publicOutfitsBtn,
@@ -1677,14 +1658,12 @@ H.setPublicSearchLocked = function(locked)
 		button.TextColor3 = H.publicSearchLocked and C.sub or C.text
 	end
 
-	-- My outfits is always available.
 	myOutfitsBtn.Active = true
 	myOutfitsBtn.Selectable = true
 	myOutfitsBtn.AutoButtonColor = true
 	myOutfitsBtn.TextColor3 = C.text
 end
 
--- Client-side rate-limit countdown.
 H.publicRateLimitToken = 0
 
 H.startPublicSearchCooldown = function(seconds)
@@ -1704,12 +1683,6 @@ H.startPublicSearchCooldown = function(seconds)
 		while H.publicRateLimitRemaining > 0
 			and token == H.publicRateLimitToken do
 
-			if H.status then
-				H.status.Text = "Rate limited, waiting ("
-					.. tostring(H.publicRateLimitRemaining)
-					.. " seconds)."
-			end
-
 			task.wait(1)
 
 			if token ~= H.publicRateLimitToken then
@@ -1721,10 +1694,6 @@ H.startPublicSearchCooldown = function(seconds)
 
 		if token == H.publicRateLimitToken then
 			H.setPublicSearchLocked(false)
-
-			if H.status then
-				H.status.Text = "You can search again."
-			end
 		end
 	end)
 end
@@ -1852,7 +1821,6 @@ H.updateResultsTileVisibility = function()
 			continue
 		end
 
-		-- Convert screen position into scrolling-canvas coordinates.
 		local tilePosition = tile.AbsolutePosition - results.AbsolutePosition
 		local tileLeft = tilePosition.X + canvasX
 		local tileTop = tilePosition.Y + canvasY
@@ -1865,8 +1833,6 @@ H.updateResultsTileVisibility = function()
 			and tileBottom >= viewportTop - overscanY
 			and tileTop <= viewportBottom + overscanY
 
-		-- Hide the entire contents of off-screen cells.
-		-- Keeping the outer tile alive preserves the grid layout.
 		content.Visible = inRange
 		tile.BackgroundTransparency = inRange and 0 or 1
 		tile.Active = inRange
@@ -1919,7 +1885,6 @@ local bodyScalePane = H.new("ScrollingFrame", {
 	AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollingDirection = Enum.ScrollingDirection.Y,
 	Visible = false, ClipsDescendants = true,
 }, center)
-H.status = { Text = "" }
 
 local detailOverlay = H.new("Frame", {
 	Name = "CatalogItemDetailsOverlay", Position = center.Position, Size = center.Size,
@@ -3079,6 +3044,42 @@ local function addTile(data, kind)
 	nameLabel.TextXAlignment = Enum.TextXAlignment.Left
 	nameLabel.TextYAlignment = Enum.TextYAlignment.Top
 	local namePadding = nameLabel:FindFirstChildOfClass("UIPadding")
+	if kind == "inventory" and data.publicInventory and not data.name then
+		nameLabel.Text = "Loading name..."
+
+		task.spawn(function()
+			local ok, info = pcall(
+				H.getProductInfo,
+				data.id,
+				Enum.InfoType.Asset
+			)
+
+			if not tile.Parent or not nameLabel.Parent then
+				return
+			end
+
+			if ok and type(info) == "table"
+				and type(info.Name) == "string"
+				and info.Name ~= "" then
+
+				data.name = info.Name
+				nameLabel.Text = info.Name
+
+				tile:SetAttribute(
+					"n",
+					string.lower(
+						info.Name .. " "
+							.. tostring(data.typeName or "")
+							.. " "
+							.. tostring(data.id)
+					)
+				)
+			else
+				nameLabel.Text = H.prettyType(data.typeName)
+					.. " · " .. tostring(data.id)
+			end
+		end)
+	end
 	if namePadding then
 		namePadding.PaddingTop, namePadding.PaddingBottom = UDim.new(0, 0), UDim.new(0, 0)
 		namePadding.PaddingLeft, namePadding.PaddingRight = UDim.new(0, 0), UDim.new(0, 0)
@@ -4676,7 +4677,6 @@ local function setTab(index)
 	publicAvatarRow.Visible = tab.kind == "outfits"
 	minBox.Visible, maxBox.Visible, creatorBox.Visible = isCatalog, isCatalog, isCatalog
 	linkRow.Visible = isCatalog
-	urlBox.Visible, linkLabel.Visible = isCatalog, isCatalog
 	if isCatalog then
 		searchBox.PlaceholderText = tab.name == "Body" and "Search body items" or (isLimited and "Search limited items" or "Search the catalog")
 	elseif tab.kind == "inventory" then searchBox.PlaceholderText = "Filter your items"
@@ -4718,13 +4718,11 @@ searchBox:GetPropertyChangedSignal("Text"):Connect(function()
 	local tab = TABS[curTab]
 	if not tab then return end
 
-	-- Keep public inventory filtering on its existing path.
 	if publicInventoryViewActive then
 		applyFilter()
 		return
 	end
 
-	-- Rebuild private inventory immediately when the search changes.
 	if tab.kind == "inventory" then
 		local chipIndex = chipIdx[curTab]
 		local chipData = tab.chips and tab.chips[chipIndex]
@@ -4737,10 +4735,8 @@ searchBox:GetPropertyChangedSignal("Text"):Connect(function()
 
 		local key = getResultScrollKey(curTab, chipIndex)
 
-		-- Always start filtered results at the top.
 		resultScrollPositions[key] = 0
 
-		-- Filter the cached inventory, not the Roblox API.
 		local filtered = getInventoryItemsForChip(chipData)
 
 		beginInventoryTileView(
@@ -4750,18 +4746,6 @@ searchBox:GetPropertyChangedSignal("Text"):Connect(function()
 			0,
 			sourceId
 		)
-
-		local status = "Showing first "
-			.. tostring(math.min(#filtered, INVENTORY_INITIAL_RENDER_COUNT))
-			.. " of "
-			.. tostring(#filtered)
-			.. " matching items"
-
-		if inventoryCacheLoading then
-			status ..= " · inventory still loading"
-		else
-			status ..= " · newest acquired first"
-		end
 		return
 	end
 
@@ -4832,9 +4816,6 @@ H.inspectPublicAvatar = function()
 	table.clear(publicInventoryItems)
 
 	H.setPublicSearchLocked(true)
-
-	-- Only request inventory here.
-	-- Outfits are loaded separately by the Search outfits button.
 	remote:FireServer("PublicInventory", username, nil, requestId)
 end
 
@@ -4851,8 +4832,6 @@ H.inspectPublicOutfits = function()
 	local requestId = beginBusy("Loading public outfits...")
 
 	if not requestId then return end
-
-	-- Clear previous public inventory state.
 	publicInventoryRequestId = nil
 	publicInventoryStreamRequestId = nil
 	publicInventoryViewActive = false
@@ -5948,7 +5927,6 @@ local function appendPublicInventoryPage(requestId, detail)
 		end
 	end
 
-	-- Wait until 32 matching items are available before creating the view.
 	if not H.publicInventoryTileViewStarted
 		and #publicInventoryItems >= INVENTORY_INITIAL_RENDER_COUNT then
 
