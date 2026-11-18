@@ -1429,7 +1429,6 @@ local function getPublicSavedOutfits(userId)
 		paginationToken = nextToken
 		page += 1
 
-		-- Slightly space out paginated requests.
 		task.wait(0.5)
 	end
 
