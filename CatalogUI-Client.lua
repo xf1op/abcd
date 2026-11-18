@@ -5517,13 +5517,40 @@ end)
 
 H.parseCatalogLink = function(raw)
 	local value = H.trim(raw)
-	local bundleId = value:match("/bundles/(%d+)")
-	local assetId = value:match("/catalog/(%d+)") or value:match("/library/(%d+)")
-		or value:match("/asset/(%d+)") or value:match("[?&]id=(%d+)")
-	local numericId = tonumber(value:match("^(%d+)$"))
-	if bundleId then return tonumber(bundleId), true end
-	if assetId then return tonumber(assetId), false end
-	if numericId then return numericId, nil end
+	if value == "" then return nil, nil end
+
+	local numericId = tonumber(value)
+	if numericId and numericId > 0 and numericId % 1 == 0 then
+		return numericId, nil
+	end
+
+	local host, path = value:match("^https?://([^/%?#]+)(/[^%?#]*)")
+	if not host or not path then
+		return nil, nil
+	end
+
+	host = string.lower(host)
+
+	if host ~= "roblox.com" and host ~= "www.roblox.com" then
+		return nil, nil
+	end
+
+	local bundleId =
+		path:match("^/bundles/(%d+)$")
+		or path:match("^/bundles/(%d+)/")
+
+	if bundleId then
+		return tonumber(bundleId), true
+	end
+
+	local assetId =
+		path:match("^/catalog/(%d+)$")
+		or path:match("^/catalog/(%d+)/")
+
+	if assetId then
+		return tonumber(assetId), false
+	end
+
 	return nil, nil
 end
 
@@ -5625,6 +5652,52 @@ H.openItemDetails = function(data)
 			if token ~= detailLoadToken or not detailOverlay.Visible then return end
 			H.showBundleContents(mergedEntries, false, false, false, true, token)
 			return
+		end
+		if data.auto and not data.bundle then
+			local assetDetailsOk, assetDetails = pcall(
+				H.callAES,
+				"GetItemDetails",
+				id,
+				Enum.AvatarItemType.Asset
+			)
+
+			local assetProductOk, assetProduct = pcall(
+				H.getProductInfo,
+				id,
+				Enum.InfoType.Asset
+			)
+
+			local isAsset =
+				(assetDetailsOk and type(assetDetails) == "table"
+					and assetDetails.AssetType ~= nil)
+				or
+				(assetProductOk and type(assetProduct) == "table"
+					and tonumber(assetProduct.AssetTypeId) ~= nil)
+
+			if not isAsset then
+				local bundleDetailsOk, bundleDetails = pcall(
+					H.callAES,
+					"GetItemDetails",
+					id,
+					Enum.AvatarItemType.Bundle
+				)
+
+				local bundleProductCallOk, bundleInfoOk, bundleProduct =
+					pcall(getBundleProductInfo, id)
+
+				local isBundle =
+					(bundleDetailsOk and type(bundleDetails) == "table"
+						and (type(bundleDetails.Items) == "table"
+							or bundleDetails.BundleType ~= nil))
+					or
+					(bundleProductCallOk and bundleInfoOk == true
+						and type(bundleProduct) == "table")
+
+				if isBundle then
+					data.bundle = true
+					data.auto = false
+				end
+			end
 		end
 		local ok, info
 		local bundleProductInfo
@@ -5797,7 +5870,9 @@ H.previewCatalogLink = function()
 	H.openItemDetails({ id = id, name = "Catalog item " .. tostring(id), bundle = bundleFlag == true, auto = bundleFlag == nil, typeName = nil })
 end
 urlBox.FocusLost:Connect(function()
-	if H.trim(urlBox.Text) ~= "" then H.previewCatalogLink() end
+	if H.trim(urlBox.Text) ~= "" then
+		H.previewCatalogLink()
+	end
 end)
 
 H.onUnequipRequested = function(assetId, typeName)
