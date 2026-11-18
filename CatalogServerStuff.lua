@@ -26,7 +26,18 @@ if not remote then
 	remote.Name = "AvatarEvent"
 	remote.Parent = ReplicatedStorage
 end
+local priceInfoRemote = ReplicatedStorage:FindFirstChild("CatalogPriceInfo")
 
+if priceInfoRemote and not priceInfoRemote:IsA("RemoteFunction") then
+	priceInfoRemote:Destroy()
+	priceInfoRemote = nil
+end
+
+if not priceInfoRemote then
+	priceInfoRemote = Instance.new("RemoteFunction")
+	priceInfoRemote.Name = "CatalogPriceInfo"
+	priceInfoRemote.Parent = ReplicatedStorage
+end
 local SINGLE = {
 	Shirt = "Shirt", Pants = "Pants", TShirt = "GraphicTShirt",
 	Face = "Face", Head = "Head", DynamicHead = "Head", Torso = "Torso",
@@ -114,6 +125,148 @@ local function isId(n)
 		and n > 0
 		and n % 1 == 0
 		and n <= MAX_SAFE_ROBLOX_ID
+end
+local productInfoCache = {}
+local productInfoPending = {}
+
+local activeProductInfoRequests = 0
+local MAX_PRODUCT_INFO_REQUESTS = 4
+
+local function isLimitedProductInfo(info)
+	if type(info) ~= "table" then
+		return false
+	end
+
+	if info.IsLimited == true
+		or info.IsLimitedUnique == true
+		or info.HasResellers == true then
+		return true
+	end
+
+	local status = tostring(info.PriceStatus or "")
+		:lower()
+		:gsub("[%s%p]+", "")
+
+	if status == "noresellers" then
+		return true
+	end
+
+	local restrictions = info.ItemRestrictions
+
+	if type(restrictions) == "table" then
+		for _, restriction in ipairs(restrictions) do
+			if restriction == "Collectible"
+				or restriction == "Limited"
+				or restriction == "LimitedUnique" then
+				return true
+			end
+		end
+	end
+
+	local collectible = info.CollectiblesItemDetails
+
+	if type(collectible) == "table" then
+		if collectible.CollectibleItemId ~= nil
+			or (tonumber(collectible.CollectibleLowestResalePrice) or 0) > 0 then
+			return true
+		end
+	end
+
+	return false
+end
+
+local function fetchMarketplaceProductInfo(id, infoType)
+	local asyncOk, asyncMethod = pcall(function()
+		return MarketplaceService.GetProductInfoAsync
+	end)
+
+	if asyncOk and type(asyncMethod) == "function" then
+		local worked, result = pcall(
+			asyncMethod,
+			MarketplaceService,
+			id,
+			infoType
+		)
+
+		if worked and type(result) == "table" then
+			return result
+		end
+	end
+
+	return MarketplaceService:GetProductInfo(id, infoType)
+end
+
+priceInfoRemote.OnServerInvoke = function(_, rawId, kind)
+	local id = tonumber(rawId)
+
+	if not isId(id) then
+		return nil
+	end
+
+	if kind ~= "Asset" and kind ~= "Bundle" then
+		return nil
+	end
+
+	local infoType = Enum.InfoType.Asset
+
+	if kind == "Bundle" then
+		local enumOk, bundleInfoType = pcall(function()
+			return Enum.InfoType.Bundle
+		end)
+		if not enumOk or not bundleInfoType then
+			return nil
+		end
+		infoType = bundleInfoType
+	end
+	local key = kind .. ":" .. string.format("%.0f", id)
+	local now = os.clock()
+	local cached = productInfoCache[key]
+	if cached then
+		if cached.expires > now then
+			return cached.ok and cached.value or nil
+		end
+		productInfoCache[key] = nil
+	end
+	local pending = productInfoPending[key]
+	if pending then
+		while not pending.done do
+			task.wait(0.03)
+		end
+		return pending.ok and pending.value or nil
+	end
+	pending = {
+		done = false,
+	}
+	productInfoPending[key] = pending
+	while activeProductInfoRequests >= MAX_PRODUCT_INFO_REQUESTS do
+		task.wait(0.05)
+	end
+	activeProductInfoRequests += 1
+	local requestOk, info = pcall(
+		fetchMarketplaceProductInfo,
+		id,
+		infoType
+	)
+	activeProductInfoRequests -= 1
+	local success = requestOk and type(info) == "table"
+	pending.ok = success
+	pending.value = success and info or nil
+	pending.done = true
+	productInfoPending[key] = nil
+	if success then
+		local limited = isLimitedProductInfo(info)
+		productInfoCache[key] = {
+			ok = true,
+			value = info,
+			expires = limited and (os.clock() + 60) or math.huge,
+		}
+		return info
+	end
+	productInfoCache[key] = {
+		ok = false,
+		expires = os.clock() + 3,
+	}
+	return nil
 end
 
 local function supported(name)
