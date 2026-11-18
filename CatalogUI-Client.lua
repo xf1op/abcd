@@ -5724,12 +5724,14 @@ H.openItemDetails = function(data)
 					info.PriceInRobux = productPrice
 					info.Price = productPrice
 				end
-				if productPrice and productPrice > 0 then
-
-					info.IsForSale = true
-					info.PriceStatus = nil
-				elseif bundleProductInfo.IsForSale ~= nil then
+				if type(bundleProductInfo.IsForSale) == "boolean" then
 					info.IsForSale = bundleProductInfo.IsForSale
+				end
+				if type(bundleProductInfo.IsPurchasable) == "boolean" then
+					info.IsPurchasable = bundleProductInfo.IsPurchasable
+				end
+				if bundleProductInfo.PriceStatus ~= nil then
+					info.PriceStatus = bundleProductInfo.PriceStatus
 				end
 				if bundleProductInfo.PriceStatus ~= nil then info.PriceStatus = bundleProductInfo.PriceStatus end
 				if info.Name == nil then info.Name = bundleProductInfo.Name end
@@ -5742,23 +5744,46 @@ H.openItemDetails = function(data)
 			local marketOk, marketInfo = pcall(H.getProductInfo, id, Enum.InfoType.Asset)
 			if catalogOk and type(catalogInfo) == "table" then
 				info = catalogInfo
+
 				if marketOk and type(marketInfo) == "table" then
 					for key, value in pairs(marketInfo) do
-						if info[key] == nil then info[key] = value end
+						if info[key] == nil then
+							info[key] = value
+						end
 					end
-					local liveAssetPrice = tonumber(marketInfo.PriceInRobux or marketInfo.Price)
-					if marketInfo.IsForSale == true and liveAssetPrice and liveAssetPrice > 0 then
-						info.PriceInRobux = liveAssetPrice
-						info.Price = liveAssetPrice
-						info.IsForSale = true
-						info.PriceStatus = nil
-					elseif marketInfo.IsForSale == true and (liveAssetPrice == 0 or marketInfo.IsFree == true) then
-						info.PriceInRobux = 0
-						info.Price = 0
-						info.IsForSale = true
-						info.PriceStatus = "Free"
+					if type(marketInfo.IsForSale) == "boolean" then
+						info.IsForSale = marketInfo.IsForSale
+					end
+					if type(marketInfo.IsPurchasable) == "boolean" then
+						info.IsPurchasable = marketInfo.IsPurchasable
+					end
+					if marketInfo.PriceStatus ~= nil then
+						info.PriceStatus = marketInfo.PriceStatus
+					end
+					if marketInfo.IsFree ~= nil then
+						info.IsFree = marketInfo.IsFree
+					end
+					local liveAssetPrice = tonumber(
+						marketInfo.PriceInRobux or marketInfo.Price
+					)
+					if marketInfo.IsForSale == true then
+						if liveAssetPrice and liveAssetPrice > 0 then
+							info.PriceInRobux = liveAssetPrice
+							info.Price = liveAssetPrice
+						elseif liveAssetPrice == 0 or marketInfo.IsFree == true then
+							info.PriceInRobux = 0
+							info.Price = 0
+							info.PriceStatus = "Free"
+						end
+					elseif marketInfo.IsForSale == false then
+						info.IsForSale = false
+
+						if marketInfo.PriceStatus == nil then
+							info.PriceStatus = "Off Sale"
+						end
 					end
 				end
+
 				ok = true
 			else
 				ok, info = marketOk, marketInfo
@@ -5826,9 +5851,16 @@ H.openItemDetails = function(data)
 			priceText = "R$ " .. H.comma(resalePrice) .. " (lowest resale)"
 		elseif limited and (info.HasResellers == false or priceStatus == "No Resellers") then
 			priceText = "Limited · no current resellers"
+		elseif info.IsForSale == false
+			or info.IsPurchasable == false
+			or priceStatus:lower() == "off sale"
+			or priceStatus:lower() == "offsale" then
+			priceText = limited and "Limited · off sale" or "Off sale"
 		elseif price and price > 0 then
 			priceText = "R$ " .. H.comma(price) .. (limited and " (original price)" or "")
-		elseif info.PriceStatus == "Free" or (price == 0 and info.IsForSale == true) then
+		elseif (info.PriceStatus == "Free" or info.IsFree == true or price == 0)
+			and info.IsForSale ~= false
+			and info.IsPurchasable ~= false then
 			priceText = "Free"
 		else
 			priceText = limited and "Limited · off sale" or "Off sale"
