@@ -5,7 +5,7 @@ local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local MarketplaceService = game:GetService("MarketplaceService")
 local AvatarEditorService = game:GetService("AvatarEditorService")
-
+local priceInfoRemote = ReplicatedStorage:WaitForChild("CatalogPriceInfo")
 local player = Players.LocalPlayer
 local remote = ReplicatedStorage:WaitForChild("AvatarEvent")
 local rigSwitchRemote = ReplicatedStorage:WaitForChild("AvatarRigSwitch")
@@ -47,38 +47,187 @@ end
 function H.cachedApiCall(cache, pending, key, ttl, callback)
 	local state = H.apiState
 	local now = os.clock()
+
 	if now >= state.lastPrune then
 		state.lastPrune = now + 60
+
 		for cacheKey, entry in pairs(state.productCache) do
-			if entry.expires <= now then state.productCache[cacheKey] = nil end
+			if entry.expires <= now then
+				state.productCache[cacheKey] = nil
+			end
 		end
+
 		for cacheKey, entry in pairs(state.detailsCache) do
-			if entry.expires <= now then state.detailsCache[cacheKey] = nil end
+			if entry.expires <= now then
+				state.detailsCache[cacheKey] = nil
+			end
 		end
 	end
+
 	local cached = cache[key]
+
 	if cached and cached.expires > now then
-		if not cached.ok then error(cached.value, 0) end
-		return type(cached.value) == "table" and table.clone(cached.value) or cached.value
+		if not cached.ok then
+			error(cached.value, 0)
+		end
+
+		return type(cached.value) == "table"
+			and table.clone(cached.value)
+			or cached.value
 	end
+
 	local waiting = pending[key]
+
 	if waiting then
-		while not waiting.done do task.wait() end
-		if not waiting.ok then error(waiting.value, 0) end
-		return type(waiting.value) == "table" and table.clone(waiting.value) or waiting.value
+		while not waiting.done do
+			task.wait()
+		end
+
+		if not waiting.ok then
+			error(waiting.value, 0)
+		end
+
+		return type(waiting.value) == "table"
+			and table.clone(waiting.value)
+			or waiting.value
 	end
-	local request = { done = false }
+
+	local request = {
+		done = false,
+	}
+
 	pending[key] = request
+
 	local ok, result = pcall(callback)
+
 	request.ok = ok
 	request.value = result
 	request.done = true
+
 	pending[key] = nil
-	cache[key] = { ok = ok, value = result, expires = os.clock() + (ok and ttl or 2) }
-	if not ok then error(result, 0) end
-	return type(result) == "table" and table.clone(result) or result
+
+	local duration = 2
+
+	if ok then
+		if type(ttl) == "function" then
+			local ttlOk, ttlResult = pcall(ttl, result)
+			duration = ttlOk and tonumber(ttlResult) or 2
+		else
+			duration = tonumber(ttl) or 2
+		end
+	end
+
+	local expires = duration == math.huge
+		and math.huge
+		or (os.clock() + math.max(0, duration))
+
+	cache[key] = {
+		ok = ok,
+		value = result,
+		expires = expires,
+	}
+
+	if not ok then
+		error(result, 0)
+	end
+
+	return type(result) == "table"
+		and table.clone(result)
+		or result
+end
+local function normalizedPriceStatus(info)
+	return tostring(info and (info.PriceStatus or info.priceStatus) or "")
+		:lower()
+		:gsub("[%s%p]+", "")
 end
 
+function H.isLimitedProductInfo(info)
+	if type(info) ~= "table" then
+		return false
+	end
+
+	if info.IsLimited == true
+		or info.IsLimitedUnique == true
+		or info.HasResellers == true
+		or info.limited == true
+		or info.hasResellers == true then
+		return true
+	end
+
+	if normalizedPriceStatus(info) == "noresellers" then
+		return true
+	end
+
+	local restrictions = info.ItemRestrictions or info.itemRestrictions
+
+	if type(restrictions) == "table" then
+		for _, restriction in ipairs(restrictions) do
+			if restriction == "Collectible"
+				or restriction == "Limited"
+				or restriction == "LimitedUnique" then
+				return true
+			end
+		end
+	end
+
+	return false
+end
+
+function H.isOffSaleInfo(info)
+	if type(info) ~= "table" then
+		return false
+	end
+
+	local isForSale = info.IsForSale
+	if isForSale == nil then
+		isForSale = info.isForSale
+	end
+
+	local isPurchasable = info.IsPurchasable
+	if isPurchasable == nil then
+		isPurchasable = info.isPurchasable
+	end
+
+	local status = normalizedPriceStatus(info)
+
+	return isForSale == false
+		or isPurchasable == false
+		or status == "offsale"
+		or status == "unavailable"
+		or status == "notforsale"
+end
+
+function H.isExplicitlyFreeInfo(info)
+	if type(info) ~= "table" or H.isOffSaleInfo(info) then
+		return false
+	end
+
+	local isForSale = info.IsForSale
+	if isForSale == nil then
+		isForSale = info.isForSale
+	end
+
+	local isPurchasable = info.IsPurchasable
+	if isPurchasable == nil then
+		isPurchasable = info.isPurchasable
+	end
+
+	local explicitlyAvailable = isForSale == true
+		or isPurchasable == true
+
+	if not explicitlyAvailable then
+		return false
+	end
+
+	local price = tonumber(
+		info.PriceInRobux or info.Price or info.price
+	)
+
+	return info.IsFree == true
+		or info.isFree == true
+		or normalizedPriceStatus(info) == "free"
+		or price == 0
+end
 function H.callAES(method, ...)
 	local args = table.pack(...)
 	local function fetch()
@@ -107,16 +256,40 @@ end
 
 function H.getProductInfo(assetId, infoType)
 	local key = tostring(infoType) .. ":" .. tostring(assetId)
-	return H.cachedApiCall(H.apiState.productCache, H.apiState.productPending, key, 18, function()
-		return H.withApiSlot(function()
-			local memberOk, asyncMethod = pcall(function() return MarketplaceService.GetProductInfoAsync end)
-			if memberOk and type(asyncMethod) == "function" then
-				local ok, result = pcall(asyncMethod, MarketplaceService, assetId, infoType)
-				if ok then return result end
-			end
-			return MarketplaceService:GetProductInfo(assetId, infoType)
-		end)
-	end)
+
+	local bundleInfoType = H.enumItem(Enum.InfoType, "Bundle")
+
+	local itemKind = bundleInfoType and infoType == bundleInfoType
+		and "Bundle"
+		or "Asset"
+
+	return H.cachedApiCall(
+		H.apiState.productCache,
+		H.apiState.productPending,
+		key,
+
+		function(info)
+			return H.isLimitedProductInfo(info) and 0 or math.huge
+		end,
+
+		function()
+			return H.withApiSlot(function()
+				local info = priceInfoRemote:InvokeServer(
+					tonumber(assetId),
+					itemKind
+				)
+
+				if type(info) ~= "table" then
+					error(
+						"Roblox product information is unavailable for "
+							.. itemKind .. " " .. tostring(assetId)
+					)
+				end
+
+				return info
+			end)
+		end
+	)
 end
 
 H.assetTypeNameByValue = (function()
@@ -2667,7 +2840,6 @@ local beginInventoryTileView
 local refreshActiveInventoryView
 local inventoryViewBuildToken = 0
 local inventoryViewRebuilding = false
-local bundleProductInfoCache = {}
 H.animationPackByAsset = H.animationPackByAsset or {}
 H.bundleAssetsByBundle = H.bundleAssetsByBundle or H.animationPackAssetsByBundle or {}
 H.animationPackAssetsByBundle = H.bundleAssetsByBundle
@@ -2943,17 +3115,22 @@ local function applyFilter()
 end
 
 local function getBundleProductInfo(bundleId)
-	local cached = bundleProductInfoCache[bundleId]
-	if cached then return true, cached end
 	local bundleInfoType = H.enumItem(Enum.InfoType, "Bundle")
+
 	if not bundleInfoType then
 		return false, "This Roblox client does not expose Enum.InfoType.Bundle"
 	end
-	local ok, productInfo = pcall(H.getProductInfo, bundleId, bundleInfoType)
+
+	local ok, productInfo = pcall(
+		H.getProductInfo,
+		bundleId,
+		bundleInfoType
+	)
+
 	if ok and type(productInfo) == "table" then
-		bundleProductInfoCache[bundleId] = productInfo
 		return true, productInfo
 	end
+
 	return false, productInfo
 end
 
@@ -2964,34 +3141,60 @@ local function addTile(data, kind)
 	local subtitle, subtitleColor
 	subtitleColor = C.sub
 	if kind == "catalog" then
-		if data.background then subtitle = "Avatar background · Preview"
+		if data.background then
+			subtitle = "Avatar background · Preview"
 		else
 			local price = data.price
-			if data.bundle and (type(price) ~= "number" or price <= 0 or data.isForSale == false) then
-				subtitle = "Bundle · Checking price..."
-			elseif data.hasResellers and data.resalePrice and data.resalePrice > 0 then
+
+			if data.hasResellers
+				and data.resalePrice
+				and data.resalePrice > 0 then
+
 				subtitle = "R$ " .. H.comma(data.resalePrice) .. " · Resale"
 				subtitleColor = C.success
+
 			elseif data.limited and data.hasResellers == true then
 				subtitle = "Limited · resale price unavailable"
-			elseif data.limited and (data.priceStatus == "No Resellers" or data.hasResellers == false) then
+
+			elseif data.limited
+				and (data.priceStatus == "No Resellers"
+					or data.hasResellers == false) then
+
 				subtitle = "Limited · No resellers"
+
+			elseif H.isOffSaleInfo(data) then
+				subtitle = data.bundle
+					and "Bundle · Off sale"
+					or (data.limited and "Limited · Off sale" or "Off sale")
+
+			elseif data.bundle
+				and (type(price) ~= "number" or price <= 0) then
+
+				subtitle = "Bundle · Checking price..."
+
 			elseif type(price) == "number" and price > 0 then
 				subtitle = "R$ " .. H.comma(price)
 				subtitleColor = C.success
-			elseif data.priceStatus == "Free" or (price == 0 and data.isForSale == true) then
+
+			elseif H.isExplicitlyFreeInfo(data) then
 				subtitle = "Free"
+
 			elseif data.bundle then
 				subtitle = "Bundle · Price unavailable"
+
 			elseif data.typeName == "DynamicHead" then
 				subtitle = "Head asset · checking availability"
+
 			else
-				subtitle = data.limited and "Limited · Off sale" or "Off sale"
+				subtitle = "Price unavailable"
 			end
-			if data.bundle and not subtitle:find("^Bundle") then subtitle = "Bundle · " .. subtitle end
 		end
-	elseif kind == "inventory" then subtitle = H.prettyType(data.typeName)
-	else subtitle = "Outfit" end
+
+	elseif kind == "inventory" then
+		subtitle = H.prettyType(data.typeName)
+	else
+		subtitle = "Outfit"
+	end
 
 	local tile = H.new("TextButton", { Text = "", BackgroundColor3 = C.card, LayoutOrder = order, Active = true }, results)
 	designSizes[tile] = Vector2.new(state.catalogLayout.cellWidth, state.catalogLayout.cellHeight)
@@ -3093,38 +3296,90 @@ local function addTile(data, kind)
 		subtitlePadding.PaddingLeft, subtitlePadding.PaddingRight = UDim.new(0, 0), UDim.new(0, 0)
 	end
 
-	if kind == "catalog" and data.bundle
-		and (type(data.price) ~= "number" or data.price <= 0 or data.isForSale == false) then
+	if kind == "catalog"
+		and data.bundle
+		and (
+			type(data.price) ~= "number"
+				or data.price <= 0
+				or H.isOffSaleInfo(data)
+		) then
+
 		task.spawn(function()
 			local infoOk, productInfo = getBundleProductInfo(data.id)
-			if not tile.Parent or not subtitleLabel.Parent then return end
+
+			if not tile.Parent or not subtitleLabel.Parent then
+				return
+			end
+
 			if not infoOk or type(productInfo) ~= "table" then
-				if data.priceStatus == "Free" or (tonumber(data.price) == 0 and data.isForSale ~= false) then
-					data.price = 0
+				if H.isOffSaleInfo(data) then
+					subtitleLabel.Text = "Bundle · Off sale"
+
+				elseif type(data.price) == "number" and data.price > 0 then
+					subtitleLabel.Text = "Bundle · R$ " .. H.comma(data.price)
+
+				elseif H.isExplicitlyFreeInfo(data) then
 					subtitleLabel.Text = "Bundle · Free"
+
 				else
 					subtitleLabel.Text = "Bundle · Price unavailable"
 				end
+
 				return
 			end
-			local currentPrice = tonumber(productInfo.PriceInRobux or productInfo.Price) or tonumber(data.price)
-			local currentSaleStatus = tostring(productInfo.PriceStatus or ""):lower()
-			if productInfo.IsForSale == false or currentSaleStatus == "off sale" then
-				data.isForSale = false
+
+			local currentPrice = tonumber(
+				productInfo.PriceInRobux or productInfo.Price
+			)
+
+			if currentPrice == nil then
+				currentPrice = tonumber(data.price)
+			end
+
+			local isForSale = productInfo.IsForSale
+			if isForSale == nil then
+				isForSale = data.isForSale
+			end
+
+			local isPurchasable = productInfo.IsPurchasable
+			if isPurchasable == nil then
+				isPurchasable = data.isPurchasable
+			end
+
+			local isFree = productInfo.IsFree
+			if isFree == nil then
+				isFree = data.isFree
+			end
+
+			local status = productInfo.PriceStatus
+			if status == nil or status == "" then
+				status = data.priceStatus
+			end
+
+			local effectiveInfo = {
+				IsForSale = isForSale,
+				IsPurchasable = isPurchasable,
+				IsFree = isFree,
+				PriceStatus = status,
+				PriceInRobux = currentPrice,
+			}
+
+			data.isForSale = isForSale
+			data.isPurchasable = isPurchasable
+			data.isFree = isFree
+			data.priceStatus = status
+			data.price = currentPrice
+
+			if H.isOffSaleInfo(effectiveInfo) then
 				subtitleLabel.Text = "Bundle · Off sale"
+
 			elseif currentPrice and currentPrice > 0 then
-				data.price = currentPrice
-				data.isForSale = true
 				subtitleLabel.Text = "Bundle · R$ " .. H.comma(currentPrice)
 				subtitleLabel.TextColor3 = C.success
-			elseif productInfo.IsForSale == true or currentSaleStatus == "free"
-				or productInfo.IsFree == true
-				or (currentPrice == 0 and productInfo.IsForSale ~= false and data.isForSale ~= false and currentSaleStatus ~= "off sale") then
-				data.price = 0
-				data.isForSale = true
+
+			elseif H.isExplicitlyFreeInfo(effectiveInfo) then
 				subtitleLabel.Text = "Bundle · Free"
-			elseif data.isForSale == false then
-				subtitleLabel.Text = "Bundle · Off sale"
+
 			else
 				subtitleLabel.Text = "Bundle · Price unavailable"
 			end
@@ -3244,6 +3499,8 @@ local function normalize(kind, item)
 			typeName = typeName, emote = typeName == "EmoteAnimation", background = isBackground, bundle = isBundle,
 			bundleType = bundleType,
 			bodyBundle = isBundle and TABS[curTab] and TABS[curTab].name == "Body",
+			isPurchasable = item.IsPurchasable,
+			isFree = item.IsFree,
 		}
 	elseif kind == "inventory" then
 		local id = tonumber(item.AssetId or item.assetId)
@@ -4912,121 +5169,250 @@ local BODY_BUNDLE_CONTENT_TYPES = {
 
 local function getSubItemMetadata(item)
 	local id = tonumber(item.id)
-	if not id then return { name = item.name or "Unknown item", priceText = "Price unavailable", countInTotal = false } end
+
+	if not id then
+		return {
+			name = item.name or "Unknown item",
+			priceText = "Price unavailable",
+			countInTotal = false,
+		}
+	end
+
 	local fallbackName = item.name
-	if fallbackName == "Loading item details..." or fallbackName == "" then fallbackName = nil end
+
+	if fallbackName == "Loading item details..." or fallbackName == "" then
+		fallbackName = nil
+	end
+
 	local cacheKey = (item.bundle and "B:" or "A:") .. tostring(id)
-	local cached = subItemMetadataCache[cacheKey]
-	if cached then return cached end
+	local cachedEntry = subItemMetadataCache[cacheKey]
+
+	if cachedEntry
+		and cachedEntry.expires > os.clock() then
+		return cachedEntry.value
+	end
 
 	local info = {}
+
 	if item.bundle then
 		local productOk, productInfo, detailsOk, details
 		local completed = 0
+
 		task.spawn(function()
-			local callOk, lookupOk, lookupValue = pcall(getBundleProductInfo, id)
+			local callOk, lookupOk, lookupValue = pcall(
+				getBundleProductInfo,
+				id
+			)
+
 			productOk = callOk and lookupOk == true
 			productInfo = callOk and lookupValue or nil
 			completed += 1
 		end)
+
 		task.spawn(function()
-			detailsOk, details = pcall(H.callAES, "GetItemDetails", id, Enum.AvatarItemType.Bundle)
+			detailsOk, details = pcall(
+				H.callAES,
+				"GetItemDetails",
+				id,
+				Enum.AvatarItemType.Bundle
+			)
+
 			completed += 1
 		end)
-		while completed < 2 do task.wait() end
-		if detailsOk and type(details) == "table" then
-			for key, value in pairs(details) do info[key] = value end
+
+		while completed < 2 do
+			task.wait()
 		end
-		if productOk and type(productInfo) == "table" then
-			for key, value in pairs(productInfo) do
-				if value ~= nil then info[key] = value end
+
+		if detailsOk and type(details) == "table" then
+			for key, value in pairs(details) do
+				info[key] = value
 			end
 		end
-		local detailPrice = detailsOk and type(details) == "table" and tonumber(details.PriceInRobux or details.Price) or nil
-		local productPrice = productOk and type(productInfo) == "table" and tonumber(productInfo.PriceInRobux or productInfo.Price) or nil
-		local savedPrice = tonumber(item.bundlePrice)
-		local price = (detailPrice and detailPrice > 0 and detailPrice)
-			or (productPrice and productPrice > 0 and productPrice)
-			or (savedPrice and savedPrice > 0 and savedPrice)
-			or detailPrice or productPrice or savedPrice
-		local detailStatus = tostring(detailsOk and type(details) == "table" and details.PriceStatus or ""):lower()
-		local productStatus = tostring(productOk and type(productInfo) == "table" and productInfo.PriceStatus or ""):lower()
-		local status = tostring(item.bundlePriceStatus or detailStatus or productStatus or info.PriceStatus or ""):lower()
-		local explicitlyFree = info.IsFree == true or item.bundleIsFree == true or detailStatus == "free" or productStatus == "free" or status == "free"
-		local explicitlyOffSale = not explicitlyFree and (detailStatus == "off sale" or detailStatus == "offsale" or productStatus == "off sale" or productStatus == "offsale" or status == "off sale" or status == "offsale")
-		local isPurchasable = info.IsPurchasable
-		if isPurchasable == nil then isPurchasable = item.bundleIsPurchasable end
-		local isForSale = info.IsForSale
-		if isForSale == nil then isForSale = item.bundleIsForSale end
-		if price == 0 and (isForSale == true or isPurchasable == true) then explicitlyFree = true end
-		local priceText, countInTotal, totalPrice
-		if explicitlyOffSale and not explicitlyFree then
-			priceText, countInTotal = "Off sale", false
-		elseif explicitlyFree then
-			priceText, countInTotal, totalPrice = "Free", true, 0
-		elseif price and price > 0 then
-			priceText, countInTotal, totalPrice = "R$ " .. H.comma(price), true, price
-		elseif isForSale == false or isPurchasable == false then
-			priceText, countInTotal = "Off sale", false
-		else
-			priceText, countInTotal = "Price unavailable", false
+
+		if productOk and type(productInfo) == "table" then
+			for key, value in pairs(productInfo) do
+				if value ~= nil then
+					info[key] = value
+				end
+			end
 		end
+
+		if info.IsForSale == nil then
+			info.IsForSale = item.bundleIsForSale
+		end
+
+		if info.IsPurchasable == nil then
+			info.IsPurchasable = item.bundleIsPurchasable
+		end
+
+		if info.IsFree == nil then
+			info.IsFree = item.bundleIsFree
+		end
+
+		if info.PriceStatus == nil then
+			info.PriceStatus = item.bundlePriceStatus
+		end
+
+		if info.PriceInRobux == nil and info.Price == nil then
+			info.PriceInRobux = item.bundlePrice
+		end
+
+		local price = tonumber(
+			info.PriceInRobux or info.Price
+		)
+
+		local priceText
+		local countInTotal
+		local totalPrice
+
+		if H.isOffSaleInfo(info) then
+			priceText = "Off sale"
+			countInTotal = false
+
+		elseif H.isExplicitlyFreeInfo(info) then
+			priceText = "Free"
+			countInTotal = true
+			totalPrice = 0
+
+		elseif price and price > 0 then
+			priceText = "R$ " .. H.comma(price)
+			countInTotal = true
+			totalPrice = price
+
+		elseif H.isLimitedProductInfo(info) and info.HasResellers == false then
+			priceText = "Limited · no resellers"
+			countInTotal = false
+
+		else
+			priceText = "Price unavailable"
+			countInTotal = false
+		end
+
 		cached = {
-			name = tostring(info.Name or fallbackName or ((item.assetType or "Bundle") .. " #" .. tostring(id))),
-			priceText = priceText, countInTotal = countInTotal, totalPrice = totalPrice,
+			name = tostring(
+				info.Name
+					or fallbackName
+					or ((item.assetType or "Bundle") .. " #" .. tostring(id))
+			),
+
+			priceText = priceText,
+			countInTotal = countInTotal,
+			totalPrice = totalPrice,
 		}
+
 	else
 		local aesOk, aesInfo, marketOk, marketInfo
 		local completed = 0
-		task.spawn(function()
-			aesOk, aesInfo = pcall(H.callAES, "GetItemDetails", id, Enum.AvatarItemType.Asset)
-			completed += 1
-		end)
-		task.spawn(function()
-			marketOk, marketInfo = pcall(H.getProductInfo, id, Enum.InfoType.Asset)
-			completed += 1
-		end)
-		while completed < 2 do task.wait() end
-		if aesOk and type(aesInfo) == "table" then
-			for key, value in pairs(aesInfo) do info[key] = value end
-		end
-		if marketOk and type(marketInfo) == "table" then
 
-			for key, value in pairs(marketInfo) do
-				if value ~= nil then info[key] = value end
+		task.spawn(function()
+			aesOk, aesInfo = pcall(
+				H.callAES,
+				"GetItemDetails",
+				id,
+				Enum.AvatarItemType.Asset
+			)
+
+			completed += 1
+		end)
+
+		task.spawn(function()
+			marketOk, marketInfo = pcall(
+				H.getProductInfo,
+				id,
+				Enum.InfoType.Asset
+			)
+
+			completed += 1
+		end)
+
+		while completed < 2 do
+			task.wait()
+		end
+
+		if aesOk and type(aesInfo) == "table" then
+			for key, value in pairs(aesInfo) do
+				info[key] = value
 			end
 		end
-		local collectibles = type(info.CollectiblesItemDetails) == "table" and info.CollectiblesItemDetails or {}
-		local resale = tonumber(info.LowestResalePrice) or tonumber(collectibles.CollectibleLowestResalePrice)
-		if (not resale or resale <= 0) and info.HasResellers == true then resale = tonumber(info.LowestPrice) end
-		local limited = info.IsLimited == true or info.IsLimitedUnique == true or info.HasResellers == true
-		local price = tonumber(info.PriceInRobux or info.Price)
-		local priceText, countInTotal, totalPrice
-		if resale and resale > 0 then
-			priceText, countInTotal, totalPrice = "R$ " .. H.comma(resale) .. " resale", true, resale
-		elseif info.IsForSale ~= false and (info.PriceStatus == "Free" or info.IsFree == true
-			or price == 0) then
-			priceText, countInTotal, totalPrice = "Free", true, 0
-		elseif info.IsForSale == true and price and price > 0 then
-			priceText, countInTotal, totalPrice = "R$ " .. H.comma(price), true, price
-		elseif limited and info.HasResellers == false then
-			priceText, countInTotal = "Limited · no resellers", false
-		elseif limited and info.HasResellers == true then
-			priceText, countInTotal = "Limited · resale price unavailable", false
-		elseif info.IsForSale == false then
-			priceText, countInTotal = "Off sale", false
-		elseif price and price > 0 and info.IsForSale == nil then
 
-			priceText, countInTotal, totalPrice = "R$ " .. H.comma(price), true, price
-		else
-			priceText, countInTotal = "Price unavailable", false
+		if marketOk and type(marketInfo) == "table" then
+			for key, value in pairs(marketInfo) do
+				if value ~= nil then
+					info[key] = value
+				end
+			end
 		end
+
+		local collectibles =
+			type(info.CollectiblesItemDetails) == "table"
+			and info.CollectiblesItemDetails
+			or {}
+
+		local resale = tonumber(info.LowestResalePrice)
+			or tonumber(collectibles.CollectibleLowestResalePrice)
+
+		if (not resale or resale <= 0) and info.HasResellers == true then
+			resale = tonumber(info.LowestPrice)
+		end
+
+		local limited = H.isLimitedProductInfo(info)
+		local price = tonumber(info.PriceInRobux or info.Price)
+
+		local priceText
+		local countInTotal
+		local totalPrice
+
+		if resale and resale > 0 then
+			priceText = "R$ " .. H.comma(resale) .. " resale"
+			countInTotal = true
+			totalPrice = resale
+
+		elseif H.isOffSaleInfo(info) then
+			priceText = limited and "Limited · off sale" or "Off sale"
+			countInTotal = false
+
+		elseif price and price > 0 then
+			priceText = "R$ " .. H.comma(price)
+			countInTotal = true
+			totalPrice = price
+
+		elseif H.isExplicitlyFreeInfo(info) then
+			priceText = "Free"
+			countInTotal = true
+			totalPrice = 0
+
+		elseif limited and info.HasResellers == false then
+			priceText = "Limited · no resellers"
+			countInTotal = false
+
+		elseif limited and info.HasResellers == true then
+			priceText = "Limited · resale price unavailable"
+			countInTotal = false
+
+		else
+			priceText = "Price unavailable"
+			countInTotal = false
+		end
+
 		cached = {
-			name = tostring(info.Name or fallbackName or ("Unknown item #" .. tostring(id))),
-			priceText = priceText, countInTotal = countInTotal, totalPrice = totalPrice,
+			name = tostring(
+				info.Name or fallbackName or ("Unknown item #" .. tostring(id))
+			),
+
+			priceText = priceText,
+			countInTotal = countInTotal,
+			totalPrice = totalPrice,
 		}
 	end
-	subItemMetadataCache[cacheKey] = cached
+
+	local limited = H.isLimitedProductInfo(info)
+
+	subItemMetadataCache[cacheKey] = {
+		value = cached,
+		expires = limited and (os.clock() + 60) or math.huge,
+	}
+
 	return cached
 end
 
@@ -5654,49 +6040,61 @@ H.openItemDetails = function(data)
 			return
 		end
 		if data.auto and not data.bundle then
-			local assetDetailsOk, assetDetails = pcall(
+
+			local bundleDetailsOk, bundleDetails = pcall(
 				H.callAES,
 				"GetItemDetails",
 				id,
-				Enum.AvatarItemType.Asset
+				Enum.AvatarItemType.Bundle
 			)
 
-			local assetProductOk, assetProduct = pcall(
-				H.getProductInfo,
-				id,
-				Enum.InfoType.Asset
-			)
+			local bundleProductCallOk, bundleInfoOk, bundleProduct =
+				pcall(getBundleProductInfo, id)
 
-			local isAsset =
-				(assetDetailsOk and type(assetDetails) == "table"
-					and assetDetails.AssetType ~= nil)
+			local isBundle =
+				(bundleDetailsOk
+					and type(bundleDetails) == "table"
+					and (
+						type(bundleDetails.Items) == "table"
+						or type(bundleDetails.BundledItems) == "table"
+						or bundleDetails.BundleType ~= nil
+					))
 				or
-				(assetProductOk and type(assetProduct) == "table"
-					and tonumber(assetProduct.AssetTypeId) ~= nil)
+				(bundleProductCallOk
+					and bundleInfoOk == true
+					and type(bundleProduct) == "table")
 
-			if not isAsset then
-				local bundleDetailsOk, bundleDetails = pcall(
+			if isBundle then
+				data.bundle = true
+				data.auto = false
+			else
+				local assetDetailsOk, assetDetails = pcall(
 					H.callAES,
 					"GetItemDetails",
 					id,
-					Enum.AvatarItemType.Bundle
+					Enum.AvatarItemType.Asset
 				)
 
-				local bundleProductCallOk, bundleInfoOk, bundleProduct =
-					pcall(getBundleProductInfo, id)
+				local assetProductOk, assetProduct = pcall(
+					H.getProductInfo,
+					id,
+					Enum.InfoType.Asset
+				)
 
-				local isBundle =
-					(bundleDetailsOk and type(bundleDetails) == "table"
-						and (type(bundleDetails.Items) == "table"
-							or bundleDetails.BundleType ~= nil))
+				local isAsset =
+					(assetDetailsOk
+						and type(assetDetails) == "table"
+						and assetDetails.AssetType ~= nil)
 					or
-					(bundleProductCallOk and bundleInfoOk == true
-						and type(bundleProduct) == "table")
+					(assetProductOk
+						and type(assetProduct) == "table"
+						and tonumber(assetProduct.AssetTypeId) ~= nil)
 
-				if isBundle then
-					data.bundle = true
-					data.auto = false
+				if not isAsset then
+					data.name = data.name or ("Catalog item " .. tostring(id))
 				end
+
+				data.auto = false
 			end
 		end
 		local ok, info
@@ -5733,7 +6131,10 @@ H.openItemDetails = function(data)
 				if bundleProductInfo.PriceStatus ~= nil then
 					info.PriceStatus = bundleProductInfo.PriceStatus
 				end
-				if bundleProductInfo.PriceStatus ~= nil then info.PriceStatus = bundleProductInfo.PriceStatus end
+
+				if bundleProductInfo.IsFree ~= nil then
+					info.IsFree = bundleProductInfo.IsFree
+				end
 				if info.Name == nil then info.Name = bundleProductInfo.Name end
 				if info.Creator == nil then info.Creator = bundleProductInfo.Creator end
 				if info.CreatorName == nil then info.CreatorName = bundleProductInfo.CreatorName end
@@ -5824,46 +6225,47 @@ H.openItemDetails = function(data)
 		local priceText
 		if data.bundle then
 			local liveBundlePrice = bundleProductInfoAvailable
-				and tonumber(bundleProductInfo.PriceInRobux or bundleProductInfo.Price) or price
-			local liveBundleStatus = bundleProductInfoAvailable
-				and tostring(bundleProductInfo.PriceStatus or ""):lower() or ""
-			if bundleProductInfoAvailable then
-				if bundleProductInfo.IsForSale == false or liveBundleStatus == "off sale" or info.IsForSale == false then
-					priceText = "Off sale"
-				elseif liveBundlePrice and liveBundlePrice > 0 then
-					priceText = "R$ " .. H.comma(liveBundlePrice)
-				elseif liveBundleStatus == "free" or bundleProductInfo.IsFree == true
-					or (liveBundlePrice == 0 and bundleProductInfo.IsForSale ~= false) then
-					priceText = "Free"
-				else
-					priceText = "Price unavailable"
-				end
-			elseif info.IsForSale == false or info.IsPurchasable == false or tostring(info.PriceStatus or ""):lower() == "off sale" then
+				and tonumber(
+					bundleProductInfo.PriceInRobux or bundleProductInfo.Price
+				)
+				or price
+
+			if H.isOffSaleInfo(info)
+				or (bundleProductInfoAvailable and H.isOffSaleInfo(bundleProductInfo)) then
+
 				priceText = "Off sale"
-			elseif price and price > 0 then
-				priceText = "R$ " .. H.comma(price)
-			elseif info.IsForSale ~= false and (info.PriceStatus == "Free" or info.IsFree == true or price == 0) then
+
+			elseif liveBundlePrice and liveBundlePrice > 0 then
+				priceText = "R$ " .. H.comma(liveBundlePrice)
+
+			elseif (bundleProductInfoAvailable
+				and H.isExplicitlyFreeInfo(bundleProductInfo))
+				or H.isExplicitlyFreeInfo(info) then
+
 				priceText = "Free"
+
 			else
 				priceText = "Price unavailable"
 			end
+
 		elseif hasResellers and resalePrice and resalePrice > 0 then
 			priceText = "R$ " .. H.comma(resalePrice) .. " (lowest resale)"
+
 		elseif limited and (info.HasResellers == false or priceStatus == "No Resellers") then
 			priceText = "Limited · no current resellers"
-		elseif info.IsForSale == false
-			or info.IsPurchasable == false
-			or priceStatus:lower() == "off sale"
-			or priceStatus:lower() == "offsale" then
+
+		elseif H.isOffSaleInfo(info) then
 			priceText = limited and "Limited · off sale" or "Off sale"
+
 		elseif price and price > 0 then
-			priceText = "R$ " .. H.comma(price) .. (limited and " (original price)" or "")
-		elseif (info.PriceStatus == "Free" or info.IsFree == true or price == 0)
-			and info.IsForSale ~= false
-			and info.IsPurchasable ~= false then
+			priceText = "R$ " .. H.comma(price)
+				.. (limited and " (original price)" or "")
+
+		elseif H.isExplicitlyFreeInfo(info) then
 			priceText = "Free"
+
 		else
-			priceText = limited and "Limited · off sale" or "Off sale"
+			priceText = "Price unavailable"
 		end
 		detailTitle.Text = tostring(info.Name or data.name or ("Item " .. tostring(id)))
 		local safeCreator = creator:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;")
