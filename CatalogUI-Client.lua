@@ -141,25 +141,34 @@ local function normalizedPriceStatus(info)
 		:gsub("[%s%p]+", "")
 end
 
+
 function H.isLimitedProductInfo(info)
-	local collectibleDetails = info.CollectiblesItemDetails or info.collectiblesItemDetails
-	if type(collectibleDetails) == "table" then
-		if collectibleDetails.IsLimited == true
-			or collectibleDetails.CollectibleItemId ~= nil
-			or (tonumber(collectibleDetails.CollectibleLowestResalePrice) or 0) > 0 then
-			return true
-		end
-	end
 	if type(info) ~= "table" then
 		return false
 	end
+
+	local collectibles = info.CollectiblesItemDetails
+		or info.collectiblesItemDetails
 
 	if info.IsLimited == true
 		or info.IsLimitedUnique == true
 		or info.HasResellers == true
 		or info.limited == true
-		or info.hasResellers == true then
+		or info.hasResellers == true
+		or info.CollectibleItemId ~= nil
+		or info.collectibleItemId ~= nil
+		or tonumber(info.UnitsAvailableForConsumption
+			or info.unitsAvailableForConsumption) ~= nil then
 		return true
+	end
+
+	if type(collectibles) == "table" then
+		if collectibles.IsLimited == true
+			or collectibles.HasResellers == true
+			or collectibles.CollectibleItemId ~= nil
+			or tonumber(collectibles.UnitsAvailableForConsumption) ~= nil then
+			return true
+		end
 	end
 
 	if normalizedPriceStatus(info) == "noresellers" then
@@ -169,7 +178,7 @@ function H.isLimitedProductInfo(info)
 	local restrictions = info.ItemRestrictions or info.itemRestrictions
 
 	if type(restrictions) == "table" then
-		for _, restriction in ipairs(restrictions) do
+		for _, restriction in pairs(restrictions) do
 			if restriction == "Collectible"
 				or restriction == "Limited"
 				or restriction == "LimitedUnique" then
@@ -180,6 +189,7 @@ function H.isLimitedProductInfo(info)
 
 	return false
 end
+
 function H.getDisplayPrice(info)
 	if type(info) ~= "table" then
 		return nil, nil
@@ -191,119 +201,115 @@ function H.getDisplayPrice(info)
 
 	local collectibles = info.CollectiblesItemDetails
 		or info.collectiblesItemDetails
+
 	if type(collectibles) ~= "table" then
 		collectibles = {}
 	end
 
-	local resale = tonumber(
-		info.LowestResalePrice or info.lowestResalePrice
+	local status = normalizedPriceStatus(info)
+
+	local hasResellers = info.HasResellers
+	if hasResellers == nil then
+		hasResellers = info.hasResellers
+	end
+	if hasResellers == nil then
+		hasResellers = collectibles.HasResellers
+	end
+
+	local stock = tonumber(
+		info.UnitsAvailableForConsumption
+			or info.unitsAvailableForConsumption
+			or collectibles.UnitsAvailableForConsumption
 	)
-	if not resale or resale <= 0 then
-		resale = tonumber(info.LowestPrice or info.lowestPrice)
+
+	local isForSale = info.IsForSale
+	if isForSale == nil then
+		isForSale = info.isForSale
 	end
-	if not resale or resale <= 0 then
-		resale = tonumber(collectibles.CollectibleLowestResalePrice)
-	end
-	if not resale or resale <= 0 then
-		resale = tonumber(info.resalePrice)
-	end
+
+	local explicitlyFree = info.IsFree == true
+		or info.isFree == true
+		or status == "free"
 
 	if not H.isLimitedProductInfo(info) then
 		return price, price ~= nil and "sale" or nil
 	end
-
-	local saleAvailable = collectibles.IsForSale
-	if type(saleAvailable) ~= "boolean" then
-		local stock = tonumber(
-			info.UnitsAvailableForConsumption
-				or info.unitsAvailableForConsumption
-		)
-		if stock == nil then
-			stock = tonumber(info.Remaining or info.remaining)
-		end
-		if stock ~= nil then
-			saleAvailable = stock > 0
-		end
-	end
-
-	if type(saleAvailable) ~= "boolean" then
-		saleAvailable = info.IsForSale
-		if type(saleAvailable) ~= "boolean" then
-			saleAvailable = info.isForSale
-		end
-	end
-
-	if type(saleAvailable) ~= "boolean" then
-		local itemStatus = info.ItemStatus or info.itemStatus
-		local function readSaleStatus(value)
-			local status = tostring(value):lower():gsub("^.*[%.:]", "")
-			if status == "sale" or status == "onsale" then
-				return true
-			elseif status == "offsale" or status == "notforsale" then
-				return false
-			end
-			return nil
-		end
-
-		if type(itemStatus) == "table" then
-			for _, value in pairs(itemStatus) do
-				local result = readSaleStatus(value)
-				if result ~= nil then
-					saleAvailable = result
-					break
-				end
-			end
-		elseif itemStatus ~= nil then
-			saleAvailable = readSaleStatus(itemStatus)
-		end
-	end
-
-	if type(saleAvailable) ~= "boolean" then
-		local status = normalizedPriceStatus(info)
-		if status == "offsale"
-			or status == "unavailable"
-			or status == "notforsale" then
-			saleAvailable = false
-		end
-	end
-
-	if type(saleAvailable) ~= "boolean" then
-		if type(info.IsPurchasable) == "boolean" then
-			saleAvailable = info.IsPurchasable
-		elseif type(info.isPurchasable) == "boolean" then
-			saleAvailable = info.isPurchasable
-		end
-	end
-
-	if saleAvailable == true then
+	if stock ~= nil and stock > 0 then
 		if price and price > 0 then
 			return price, "sale"
 		end
-		if price == 0 and H.isExplicitlyFreeInfo(info) then
+
+		if price == 0 and explicitlyFree then
 			return 0, "sale"
 		end
-	elseif saleAvailable == false then
+
+		return nil, "stock"
+	end
+	if stock == nil and isForSale == true then
+		if price and price > 0 then
+			return price, "sale"
+		end
+
+		if price == 0 and explicitlyFree then
+			return 0, "sale"
+		end
+	end
+	if hasResellers == true then
+		local resale = tonumber(
+			info.LowestResalePrice or info.lowestResalePrice
+		)
+
+		if not resale or resale <= 0 then
+			resale = tonumber(
+				info.LowestPrice or info.lowestPrice
+			)
+		end
+
+		if not resale or resale <= 0 then
+			resale = tonumber(
+				collectibles.CollectibleLowestResalePrice
+			)
+		end
+
+		if not resale or resale <= 0 then
+			resale = tonumber(info.resalePrice)
+		end
+
 		if resale and resale > 0 then
 			return resale, "resale"
 		end
+
+		return nil, "resaleUnavailable"
+	end
+
+	if status == "offsale"
+		or status == "unavailable"
+		or status == "notforsale" then
 		return nil, "offSale"
 	end
 
-	if resale and resale > 0 then
-		return resale, "resale"
+	if status == "noresellers" or hasResellers == false then
+		return nil, "noResellers"
 	end
-	if price and price > 0 then
+
+	if stock == nil and price and price > 0 then
 		return price, "sale"
 	end
-	if price == 0 and H.isExplicitlyFreeInfo(info) then
+
+	if stock == nil and price == 0 and explicitlyFree then
 		return 0, "sale"
 	end
 
 	return nil, nil
 end
+
 function H.isOffSaleInfo(info)
 	if type(info) ~= "table" then
 		return false
+	end
+	if H.isLimitedProductInfo(info) then
+		local _, source = H.getDisplayPrice(info)
+		return source == "offSale"
 	end
 
 	local isForSale = info.IsForSale
@@ -311,27 +317,14 @@ function H.isOffSaleInfo(info)
 		isForSale = info.isForSale
 	end
 
-	local isPurchasable = info.IsPurchasable
-	if isPurchasable == nil then
-		isPurchasable = info.isPurchasable
-	end
-
 	local status = normalizedPriceStatus(info)
-	local explicitlyFree = info.IsFree == true
-		or info.isFree == true
-		or status == "free"
-	if isForSale == false
+
+	return isForSale == false
 		or status == "offsale"
 		or status == "unavailable"
-		or status == "notforsale" then
-		return true
-	end
-	if isPurchasable == false and not explicitlyFree then
-		return true
-	end
-
-	return false
+		or status == "notforsale"
 end
+
 
 function H.isExplicitlyFreeInfo(info)
 	if type(info) ~= "table" or H.isOffSaleInfo(info) then
@@ -3605,26 +3598,66 @@ end
 local function normalize(kind, item)
 	if kind == "catalog" then
 		if type(item.Id) ~= "number" then return nil end
-		local typeName = H.assetTypeName(item.AssetType or item.AssetTypeId)
-		local collectibles = item.CollectiblesItemDetails or item.collectiblesItemDetails
-		if type(collectibles) ~= "table" then collectibles = {} end
 
-		local resalePrice = tonumber(item.LowestResalePrice or item.lowestResalePrice)
-		if not resalePrice or resalePrice <= 0 then
-			resalePrice = tonumber(item.LowestPrice or item.lowestPrice)
-		end
-		if not resalePrice or resalePrice <= 0 then
-			resalePrice = tonumber(collectibles.CollectibleLowestResalePrice)
+		local typeName = H.assetTypeName(item.AssetType or item.AssetTypeId)
+
+		local collectibles = item.CollectiblesItemDetails
+			or item.collectiblesItemDetails
+
+		if type(collectibles) ~= "table" then
+			collectibles = {}
 		end
 
 		local hasResellers = item.HasResellers
-		if hasResellers == nil then hasResellers = item.hasResellers end
-		if hasResellers == nil and resalePrice ~= nil and resalePrice > 0 then
-			hasResellers = true
+		if hasResellers == nil then
+			hasResellers = item.hasResellers
+		end
+		if hasResellers == nil then
+			hasResellers = collectibles.HasResellers
+		end
+
+		local resalePrice
+
+		if hasResellers == true then
+			resalePrice = tonumber(
+				item.LowestResalePrice or item.lowestResalePrice
+			)
+
+			if not resalePrice or resalePrice <= 0 then
+				resalePrice = tonumber(item.LowestPrice or item.lowestPrice)
+			end
+
+			if not resalePrice or resalePrice <= 0 then
+				resalePrice = tonumber(collectibles.CollectibleLowestResalePrice)
+			end
 		end
 
 		local priceStatus = tostring(item.PriceStatus or item.priceStatus or "")
+		local normalizedStatus = priceStatus:lower():gsub("[%s%p]+", "")
+
 		local itemRestrictions = item.ItemRestrictions or item.itemRestrictions
+
+		local limited = hasResellers == true
+			or item.IsLimited == true
+			or item.isLimited == true
+			or item.IsLimitedUnique == true
+			or item.isLimitedUnique == true
+			or normalizedStatus == "noresellers"
+			or item.CollectibleItemId ~= nil
+			or item.collectibleItemId ~= nil
+			or tonumber(item.UnitsAvailableForConsumption
+				or item.unitsAvailableForConsumption) ~= nil
+
+		if type(itemRestrictions) == "table" then
+			for _, restriction in pairs(itemRestrictions) do
+				if restriction == "Collectible"
+					or restriction == "Limited"
+					or restriction == "LimitedUnique" then
+					limited = true
+					break
+				end
+			end
+		end
 		local limited = hasResellers == true
 			or item.IsLimited == true or item.isLimited == true
 			or item.IsLimitedUnique == true or item.isLimitedUnique == true
@@ -6382,21 +6415,21 @@ H.openItemDetails = function(data)
 		if type(info.Creator) == "table" then creator = tostring(info.Creator.Name or info.Creator.CreatorName or creator)
 		elseif info.CreatorName then creator = tostring(info.CreatorName) end
 		local collectibles = type(info.CollectiblesItemDetails) == "table" and info.CollectiblesItemDetails or {}
-		local resalePrice = tonumber(info.LowestResalePrice) or tonumber(info.LowestPrice)
-		if not resalePrice or resalePrice <= 0 then
-			resalePrice = tonumber(collectibles.CollectibleLowestResalePrice)
-		end
+		local collectibles = type(info.CollectiblesItemDetails) == "table"
+			and info.CollectiblesItemDetails
+			or {}
+
 		local hasResellers = info.HasResellers
-		if hasResellers == nil and resalePrice ~= nil and resalePrice > 0 then hasResellers = true end
-		local restrictions = type(info.ItemRestrictions) == "table" and info.ItemRestrictions or {}
-		local priceStatus = tostring(info.PriceStatus or "")
-		local limited = not data.bundle and (info.IsLimited == true or info.IsLimitedUnique == true or hasResellers or priceStatus == "No Resellers")
-		for _, restriction in ipairs(restrictions) do
-			if restriction == "Collectible" or restriction == "Limited" or restriction == "LimitedUnique" then
-				limited = true
-				break
-			end
+		if hasResellers == nil then
+			hasResellers = info.hasResellers
 		end
+		if hasResellers == nil then
+			hasResellers = collectibles.HasResellers
+		end
+
+		local priceStatus = tostring(info.PriceStatus or info.priceStatus or "")
+		local limited = not data.bundle and H.isLimitedProductInfo(info)
+
 		local price = tonumber(info.PriceInRobux or info.Price)
 		local priceText
 		if data.bundle then
@@ -6436,8 +6469,10 @@ H.openItemDetails = function(data)
 
 			elseif hasResellers then
 				priceText = "Limited · resale price unavailable"
-
-			elseif info.HasResellers == false or priceStatus == "No Resellers" then
+			elseif normalizedPriceStatus(info) == "offsale" then
+				priceText = "Limited · off sale"
+			elseif hasResellers == false or normalizedPriceStatus(info) == "noresellers" then
+				
 				priceText = "Limited · no current resellers"
 
 			else
