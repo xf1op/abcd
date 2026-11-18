@@ -173,6 +173,7 @@ function H.isLimitedProductInfo(info)
 	return false
 end
 
+
 function H.isOffSaleInfo(info)
 	if type(info) ~= "table" then
 		return false
@@ -189,12 +190,20 @@ function H.isOffSaleInfo(info)
 	end
 
 	local status = normalizedPriceStatus(info)
-
-	return isForSale == false
-		or isPurchasable == false
+	local explicitlyFree = info.IsFree == true
+		or info.isFree == true
+		or status == "free"
+	if isForSale == false
 		or status == "offsale"
 		or status == "unavailable"
-		or status == "notforsale"
+		or status == "notforsale" then
+		return true
+	end
+	if isPurchasable == false and not explicitlyFree then
+		return true
+	end
+
+	return false
 end
 
 function H.isExplicitlyFreeInfo(info)
@@ -212,22 +221,20 @@ function H.isExplicitlyFreeInfo(info)
 		isPurchasable = info.isPurchasable
 	end
 
-	local explicitlyAvailable = isForSale == true
-		or isPurchasable == true
-
-	if not explicitlyAvailable then
-		return false
+	local status = normalizedPriceStatus(info)
+	if status == "free"
+		or info.IsFree == true
+		or info.isFree == true then
+		return true
 	end
-
 	local price = tonumber(
 		info.PriceInRobux or info.Price or info.price
 	)
 
-	return info.IsFree == true
-		or info.isFree == true
-		or normalizedPriceStatus(info) == "free"
-		or price == 0
+	return price == 0
+		and (isForSale == true or isPurchasable == true)
 end
+
 function H.callAES(method, ...)
 	local args = table.pack(...)
 	local function fetch()
