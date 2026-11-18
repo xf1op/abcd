@@ -142,6 +142,14 @@ local function normalizedPriceStatus(info)
 end
 
 function H.isLimitedProductInfo(info)
+	local collectibleDetails = info.CollectiblesItemDetails or info.collectiblesItemDetails
+	if type(collectibleDetails) == "table" then
+		if collectibleDetails.IsLimited == true
+			or collectibleDetails.CollectibleItemId ~= nil
+			or (tonumber(collectibleDetails.CollectibleLowestResalePrice) or 0) > 0 then
+			return true
+		end
+	end
 	if type(info) ~= "table" then
 		return false
 	end
@@ -172,8 +180,127 @@ function H.isLimitedProductInfo(info)
 
 	return false
 end
+function H.getDisplayPrice(info)
+	if type(info) ~= "table" then
+		return nil, nil
+	end
 
+	local price = tonumber(
+		info.PriceInRobux or info.Price or info.price
+	)
 
+	local collectibles = info.CollectiblesItemDetails
+		or info.collectiblesItemDetails
+	if type(collectibles) ~= "table" then
+		collectibles = {}
+	end
+
+	local resale = tonumber(
+		info.LowestResalePrice or info.lowestResalePrice
+	)
+	if not resale or resale <= 0 then
+		resale = tonumber(info.LowestPrice or info.lowestPrice)
+	end
+	if not resale or resale <= 0 then
+		resale = tonumber(collectibles.CollectibleLowestResalePrice)
+	end
+	if not resale or resale <= 0 then
+		resale = tonumber(info.resalePrice)
+	end
+
+	if not H.isLimitedProductInfo(info) then
+		return price, price ~= nil and "sale" or nil
+	end
+
+	local saleAvailable = collectibles.IsForSale
+	if type(saleAvailable) ~= "boolean" then
+		local stock = tonumber(
+			info.UnitsAvailableForConsumption
+				or info.unitsAvailableForConsumption
+		)
+		if stock == nil then
+			stock = tonumber(info.Remaining or info.remaining)
+		end
+		if stock ~= nil then
+			saleAvailable = stock > 0
+		end
+	end
+
+	if type(saleAvailable) ~= "boolean" then
+		saleAvailable = info.IsForSale
+		if type(saleAvailable) ~= "boolean" then
+			saleAvailable = info.isForSale
+		end
+	end
+
+	if type(saleAvailable) ~= "boolean" then
+		local itemStatus = info.ItemStatus or info.itemStatus
+		local function readSaleStatus(value)
+			local status = tostring(value):lower():gsub("^.*[%.:]", "")
+			if status == "sale" or status == "onsale" then
+				return true
+			elseif status == "offsale" or status == "notforsale" then
+				return false
+			end
+			return nil
+		end
+
+		if type(itemStatus) == "table" then
+			for _, value in pairs(itemStatus) do
+				local result = readSaleStatus(value)
+				if result ~= nil then
+					saleAvailable = result
+					break
+				end
+			end
+		elseif itemStatus ~= nil then
+			saleAvailable = readSaleStatus(itemStatus)
+		end
+	end
+
+	if type(saleAvailable) ~= "boolean" then
+		local status = normalizedPriceStatus(info)
+		if status == "offsale"
+			or status == "unavailable"
+			or status == "notforsale" then
+			saleAvailable = false
+		end
+	end
+
+	if type(saleAvailable) ~= "boolean" then
+		if type(info.IsPurchasable) == "boolean" then
+			saleAvailable = info.IsPurchasable
+		elseif type(info.isPurchasable) == "boolean" then
+			saleAvailable = info.isPurchasable
+		end
+	end
+
+	if saleAvailable == true then
+		if price and price > 0 then
+			return price, "sale"
+		end
+		if price == 0 and H.isExplicitlyFreeInfo(info) then
+			return 0, "sale"
+		end
+	elseif saleAvailable == false then
+		if resale and resale > 0 then
+			return resale, "resale"
+		end
+		return nil, "offSale"
+	end
+
+	if resale and resale > 0 then
+		return resale, "resale"
+	end
+	if price and price > 0 then
+		return price, "sale"
+	end
+	if price == 0 and H.isExplicitlyFreeInfo(info) then
+		return 0, "sale"
+	end
+
+	return nil, nil
+end
 function H.isOffSaleInfo(info)
 	if type(info) ~= "table" then
 		return false
@@ -3152,21 +3279,21 @@ local function addTile(data, kind)
 			subtitle = "Avatar background · Preview"
 		else
 			local price = data.price
+			local displayPrice, priceSource = H.getDisplayPrice(data)
 
-			if data.hasResellers
-				and data.resalePrice
-				and data.resalePrice > 0 then
-
-				subtitle = "R$ " .. H.comma(data.resalePrice) .. " · Resale"
+			if data.limited and displayPrice and displayPrice > 0 then
+				subtitle = "R$ " .. H.comma(displayPrice)
+					.. (priceSource == "resale" and " · Resale" or "")
 				subtitleColor = C.success
+
+			elseif data.limited and displayPrice == 0 and H.isExplicitlyFreeInfo(data) then
+				subtitle = "Free"
 
 			elseif data.limited and data.hasResellers == true then
 				subtitle = "Limited · resale price unavailable"
 
 			elseif data.limited
-				and (data.priceStatus == "No Resellers"
-					or data.hasResellers == false) then
-
+				and (data.priceStatus == "No Resellers" or data.hasResellers == false) then
 				subtitle = "Limited · No resellers"
 
 			elseif H.isOffSaleInfo(data) then
@@ -3174,9 +3301,7 @@ local function addTile(data, kind)
 					and "Bundle · Off sale"
 					or (data.limited and "Limited · Off sale" or "Off sale")
 
-			elseif data.bundle
-				and (type(price) ~= "number" or price <= 0) then
-
+			elseif data.bundle and (type(price) ~= "number" or price <= 0) then
 				subtitle = "Bundle · Checking price..."
 
 			elseif type(price) == "number" and price > 0 then
@@ -3481,33 +3606,75 @@ local function normalize(kind, item)
 	if kind == "catalog" then
 		if type(item.Id) ~= "number" then return nil end
 		local typeName = H.assetTypeName(item.AssetType or item.AssetTypeId)
-		local resalePrice = tonumber(item.LowestResalePrice)
-		if not resalePrice or resalePrice <= 0 then resalePrice = tonumber(item.LowestPrice) end
+		local collectibles = item.CollectiblesItemDetails or item.collectiblesItemDetails
+		if type(collectibles) ~= "table" then collectibles = {} end
+
+		local resalePrice = tonumber(item.LowestResalePrice or item.lowestResalePrice)
+		if not resalePrice or resalePrice <= 0 then
+			resalePrice = tonumber(item.LowestPrice or item.lowestPrice)
+		end
+		if not resalePrice or resalePrice <= 0 then
+			resalePrice = tonumber(collectibles.CollectibleLowestResalePrice)
+		end
+
 		local hasResellers = item.HasResellers
-		if hasResellers == nil and resalePrice ~= nil and resalePrice > 0 then hasResellers = true end
-		local priceStatus = tostring(item.PriceStatus or "")
-		local limited = hasResellers == true or item.IsLimited == true or item.IsLimitedUnique == true or priceStatus == "No Resellers"
-		if type(item.ItemRestrictions) == "table" then
-			for _, restriction in ipairs(item.ItemRestrictions) do
-				if restriction == "Collectible" or restriction == "Limited" or restriction == "LimitedUnique" then
+		if hasResellers == nil then hasResellers = item.hasResellers end
+		if hasResellers == nil and resalePrice ~= nil and resalePrice > 0 then
+			hasResellers = true
+		end
+
+		local priceStatus = tostring(item.PriceStatus or item.priceStatus or "")
+		local itemRestrictions = item.ItemRestrictions or item.itemRestrictions
+		local limited = hasResellers == true
+			or item.IsLimited == true or item.isLimited == true
+			or item.IsLimitedUnique == true or item.isLimitedUnique == true
+			or priceStatus == "No Resellers"
+
+		if type(itemRestrictions) == "table" then
+			for _, restriction in ipairs(itemRestrictions) do
+				if restriction == "Collectible"
+					or restriction == "Limited"
+					or restriction == "LimitedUnique" then
 					limited = true
 					break
 				end
 			end
 		end
+
 		local isBundle = H.isBundle(item)
-		local bundleType = tostring(item.BundleType or "")
+		local bundleType = tostring(item.BundleType or item.bundleType or "")
 		local isBackground = typeName == "AvatarBackground"
 			or tonumber(item.AssetTypeId) == 92
+
+		local isForSale = item.IsForSale
+		if isForSale == nil then isForSale = item.isForSale end
+		local isPurchasable = item.IsPurchasable
+		if isPurchasable == nil then isPurchasable = item.isPurchasable end
+		local isFree = item.IsFree
+		if isFree == nil then isFree = item.isFree end
+
 		return {
-			id = item.Id, name = tostring(item.Name or ("Item " .. item.Id)), price = tonumber(item.PriceInRobux or item.Price),
-			resalePrice = resalePrice, hasResellers = hasResellers, limited = limited,
-			priceStatus = priceStatus, isForSale = item.IsForSale,
-			typeName = typeName, emote = typeName == "EmoteAnimation", background = isBackground, bundle = isBundle,
+			id = item.Id,
+			name = tostring(item.Name or item.name or ("Item " .. item.Id)),
+			price = tonumber(item.PriceInRobux or item.Price or item.price),
+			resalePrice = resalePrice,
+			hasResellers = hasResellers,
+			limited = limited,
+			priceStatus = priceStatus,
+			isForSale = isForSale,
+			typeName = typeName,
+			emote = typeName == "EmoteAnimation",
+			background = isBackground,
+			bundle = isBundle,
 			bundleType = bundleType,
 			bodyBundle = isBundle and TABS[curTab] and TABS[curTab].name == "Body",
-			isPurchasable = item.IsPurchasable,
-			isFree = item.IsFree,
+			isPurchasable = isPurchasable,
+			isFree = isFree,
+			unitsAvailableForConsumption = tonumber(item.UnitsAvailableForConsumption or item.unitsAvailableForConsumption),
+			remaining = tonumber(item.Remaining or item.remaining),
+			itemStatus = item.ItemStatus or item.itemStatus,
+			collectiblesItemDetails = collectibles,
+			itemRestrictions = itemRestrictions,
 		}
 	elseif kind == "inventory" then
 		local id = tonumber(item.AssetId or item.assetId)
@@ -5365,15 +5532,17 @@ local function getSubItemMetadata(item)
 
 		local limited = H.isLimitedProductInfo(info)
 		local price = tonumber(info.PriceInRobux or info.Price)
+		local displayPrice, priceSource = H.getDisplayPrice(info)
 
 		local priceText
 		local countInTotal
 		local totalPrice
 
-		if resale and resale > 0 then
-			priceText = "R$ " .. H.comma(resale) .. " resale"
+		if limited and displayPrice and displayPrice > 0 then
+			priceText = "R$ " .. H.comma(displayPrice)
+				.. (priceSource == "resale" and " resale" or "")
 			countInTotal = true
-			totalPrice = resale
+			totalPrice = displayPrice
 
 		elseif H.isOffSaleInfo(info) then
 			priceText = limited and "Limited · off sale" or "Off sale"
@@ -6255,18 +6424,31 @@ H.openItemDetails = function(data)
 				priceText = "Price unavailable"
 			end
 
-		elseif hasResellers and resalePrice and resalePrice > 0 then
-			priceText = "R$ " .. H.comma(resalePrice) .. " (lowest resale)"
+		elseif limited then
+			local displayPrice, priceSource = H.getDisplayPrice(info)
 
-		elseif limited and (info.HasResellers == false or priceStatus == "No Resellers") then
-			priceText = "Limited · no current resellers"
+			if displayPrice and displayPrice > 0 then
+				priceText = "R$ " .. H.comma(displayPrice)
+					.. (priceSource == "resale" and " (lowest resale)" or " (original price)")
+
+			elseif displayPrice == 0 and H.isExplicitlyFreeInfo(info) then
+				priceText = "Free"
+
+			elseif hasResellers then
+				priceText = "Limited · resale price unavailable"
+
+			elseif info.HasResellers == false or priceStatus == "No Resellers" then
+				priceText = "Limited · no current resellers"
+
+			else
+				priceText = "Limited · off sale"
+			end
 
 		elseif H.isOffSaleInfo(info) then
-			priceText = limited and "Limited · off sale" or "Off sale"
+			priceText = "Off sale"
 
 		elseif price and price > 0 then
 			priceText = "R$ " .. H.comma(price)
-				.. (limited and " (original price)" or "")
 
 		elseif H.isExplicitlyFreeInfo(info) then
 			priceText = "Free"
