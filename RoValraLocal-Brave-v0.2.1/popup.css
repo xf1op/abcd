@@ -1,0 +1,101 @@
+:root {
+  color-scheme: dark;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: #14171c;
+  color: #edf0f4;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  width: 370px;
+  max-height: 620px;
+  margin: 0;
+  overflow-y: auto;
+  background: #14171c;
+  font-size: 13px;
+}
+
+header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 16px 16px 13px;
+  border-bottom: 1px solid #2c323b;
+}
+
+h1 { margin: 0; font-size: 18px; font-weight: 700; }
+header p { margin: 4px 0 0; color: #9ea8b5; font-size: 11px; }
+.version { color: #8f9aaa; font-size: 11px; padding-top: 4px; }
+
+main { padding: 0 14px 12px; }
+.group { padding: 13px 0; border-bottom: 1px solid #2c323b; }
+h2 { margin: 0 0 9px; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: #aab4c1; }
+
+.setting {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  min-height: 42px;
+  padding: 5px 0;
+  cursor: pointer;
+}
+.setting strong { display: block; font-size: 13px; font-weight: 600; }
+.setting small { display: block; margin-top: 2px; max-width: 275px; color: #98a3b1; line-height: 1.35; font-size: 11px; }
+input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: #8ba9d4; flex: 0 0 auto; }
+
+.field { display: block; margin: 2px 0 6px; font-size: 12px; font-weight: 600; }
+.field span { color: #98a3b1; font-weight: 400; }
+.text-input {
+  width: 100%;
+  height: 34px;
+  padding: 0 9px;
+  color: #f2f4f7;
+  background: #20252d;
+  border: 1px solid #39424e;
+  border-radius: 6px;
+  outline: none;
+  font: inherit;
+}
+.text-input:focus { border-color: #8299b8; }
+.hint { margin: 6px 0 0; color: #8e99a8; font-size: 11px; line-height: 1.4; }
+
+button {
+  color: #f2f4f7;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+}
+.secondary {
+  margin-top: 8px;
+  padding: 7px 11px;
+  background: #303b49;
+  border: 1px solid #48576a;
+  border-radius: 6px;
+}
+.secondary:hover { background: #394758; }
+.status { min-height: 14px; color: #9cba9d; font-size: 11px; }
+.section-heading { display: flex; justify-content: space-between; align-items: center; }
+.section-heading h2 { margin-bottom: 0; }
+.text-button { padding: 3px 0; color: #a8bddb; background: transparent; font-size: 11px; }
+.text-button:hover { color: #d4e2f5; }
+
+.history { margin-top: 9px; }
+.empty { margin: 0; color: #8994a3; font-size: 11px; }
+.game-history { padding: 8px 0; border-top: 1px solid #272d35; }
+.game-title { margin-bottom: 5px; color: #dae0e8; font-weight: 600; }
+.server-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin: 4px 0; color: #aeb8c5; font-size: 11px; }
+.server-id { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.region-button { flex: 0 0 auto; padding: 4px 7px; background: #293340; border-radius: 4px; font-size: 10px; }
+.region-result { flex: 1 1 auto; text-align: right; color: #a3b6d1; font-size: 10px; }
+
+footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 14px 12px;
+  color: #7f8a98;
+  font-size: 10px;
+}
