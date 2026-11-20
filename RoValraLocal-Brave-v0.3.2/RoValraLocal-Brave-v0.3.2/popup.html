@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RoValra Local</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <div>
+      <h1>RoValra Local</h1>
+      <p>Private · Local storage · No telemetry</p>
+    </div>
+    <span class="version">0.3.2</span>
+  </header>
+
+  <main>
+    <section class="group">
+      <h2>Home page</h2>
+      <label class="setting"><span><strong>Clean up Home page</strong><small>Keep Continue and Favorites. Removed sections and their metadata are stripped before rendering; Roblox still sends one combined feed request for the whole homepage.</small></span><input type="checkbox" id="cleanHomePage"></label>
+    </section>
+
+    <section class="group">
+      <h2>Layout</h2>
+      <label class="setting"><span><strong>Collapse sidebar</strong><small>Keep a narrow icon rail where supported.</small></span><input type="checkbox" id="collapseSidebar"></label>
+      <label class="setting"><span><strong>Hide sidebar</strong><small>Completely hide the left navigation.</small></span><input type="checkbox" id="hideSidebar"></label>
+    </section>
+
+    <section class="group">
+      <h2>Avatar</h2>
+      <label class="setting"><span><strong>10-accessory limit</strong><small>Enabled by default. Blocks Wear clicks only when the item type is identifiable in Roblox's page markup.</small></span><input type="checkbox" id="accessoryLimitEnabled"></label>
+      <p class="hint">Open your Roblox Avatar page to see the current accessory count.</p>
+    </section>
+
+    <section class="group">
+      <h2>Server regions</h2>
+      <label class="field" for="regionProviderId">Region-provider extension ID <span>(optional)</span></label>
+      <input class="text-input" id="regionProviderId" type="text" maxlength="32" autocomplete="off" spellcheck="false" placeholder="32-character extension ID">
+      <p class="hint">This uses local extension-to-extension messaging. No region service or third-party server is contacted by RoValra Local itself.</p>
+      <button class="secondary" id="saveProvider" type="button">Save provider ID</button>
+      <p class="status" id="providerStatus" aria-live="polite"></p>
+    </section>
+
+    <section class="group">
+      <div class="section-heading"><h2>Recent servers</h2><button class="text-button" id="clearHistory" type="button">Clear all</button></div>
+      <p class="hint">Up to five server IDs per game. A server is recorded when you click its server row; this is a selection/join attempt, not proof that the game successfully connected.</p>
+      <div id="recentServers" class="history"><p class="empty">No server selections saved yet.</p></div>
+    </section>
+  </main>
+
+  <footer>
+    <span>Data stays in this browser profile.</span>
+    <button id="resetSettings" type="button" class="text-button">Reset settings</button>
+  </footer>
+  <script src="popup.js"></script>
+</body>
+</html>
