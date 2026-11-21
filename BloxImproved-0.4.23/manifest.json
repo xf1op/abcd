@@ -1,0 +1,49 @@
+{
+  "manifest_version": 3,
+  "name": "BloxImproved",
+  "short_name": "BloxImproved",
+  "version": "0.4.23",
+  "description": "Local homepage cleanup, compact sidebar, profile outfit gallery and privacy controls.",
+  "permissions": [
+    "storage"
+  ],
+  "action": {
+    "default_title": "BloxImproved",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.roblox.com/*"
+      ],
+      "js": [
+        "home-feed-filter.js",
+        "accessory-limit.js",
+        "profile-route-bridge.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://www.roblox.com/*"
+      ],
+      "js": [
+        "home-feed-bridge.js",
+        "sidebar-collapse.js",
+        "outfits-gallery.js",
+        "privacy-toggle.js"
+      ],
+      "run_at": "document_start",
+      "world": "ISOLATED"
+    }
+  ],
+  "host_permissions": [
+    "https://avatar.roblox.com/*",
+    "https://thumbnails.roblox.com/*",
+    "https://apis.roblox.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}
