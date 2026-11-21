@@ -1,0 +1,33 @@
+:root {
+  color-scheme: dark;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: #14171c;
+  color: #edf0f4;
+}
+* { box-sizing: border-box; }
+body { width: 360px; max-height: 520px; margin: 0; overflow-y: auto; background: #14171c; font-size: 13px; }
+header { display: flex; align-items: flex-start; justify-content: space-between; padding: 16px; border-bottom: 1px solid #2c323b; }
+h1 { margin: 0; font-size: 18px; font-weight: 700; }
+header p { margin: 4px 0 0; color: #9ea8b5; font-size: 11px; }
+.version { color: #8f9aaa; font-size: 11px; padding-top: 4px; }
+main { padding: 0 14px 12px; }
+.group { padding: 14px 0; border-bottom: 1px solid #2c323b; }
+h2 { margin: 0 0 9px; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: #aab4c1; }
+.setting { display: flex; justify-content: space-between; align-items: center; gap: 14px; min-height: 42px; padding: 5px 0; cursor: pointer; }
+.setting strong, .feature-row strong { display: block; font-size: 13px; font-weight: 600; }
+.setting small { display: block; margin-top: 3px; max-width: 270px; color: #98a3b1; line-height: 1.4; font-size: 11px; }
+input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: #8ba9d4; flex: 0 0 auto; }
+.hint { margin: 7px 0 0; color: #8e99a8; font-size: 11px; line-height: 1.45; }
+.feature-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.state { flex: 0 0 auto; color: #a8c5a8; font-size: 11px; }
+button { color: #f2f4f7; border: 0; cursor: pointer; font: inherit; }
+.text-button { padding: 3px 0; color: #a8bddb; background: transparent; font-size: 11px; }
+.text-button:hover { color: #d4e2f5; }
+footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 14px 12px; color: #7f8a98; font-size: 10px; }
+
+#sidebarButtonOptions { margin-top: 6px; }
+#sidebarButtonOptions summary { color: #a8bddb; cursor: pointer; font-size: 11px; padding: 6px 0; }
+#sidebarButtonList { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; margin: 0; padding: 0; border: 0; min-width: 0; }
+#sidebarButtonList:disabled { opacity: .45; }
+.compact-setting { min-height: 30px; padding: 3px 0; gap: 6px; }
+.compact-setting span { font-size: 11px; color: #c8d0da; }
